@@ -79,7 +79,7 @@
       <button data-preset="overview" title="The whole map (double-click)">Overview</button>
       <button data-preset="view" title="What the 2D view shows">2D view</button>
       <button data-preset="top" title="Straight from above">Top</button>
-      <button data-preset="close" title="A close view (45°, 20 m away, FOV 40°) at the middle of the 2D view">Close-up</button>
+      <button data-preset="close" title="A close view (45°, 20 m away or the same in the unit of the map, FOV 40°) at the middle of the 2D view">Close-up</button>
       <button class="v3-max ibtn" data-icon="maximize" title="Maximize / restore the panel"></button>
       <button class="v3-close ibtn" data-icon="x" title="Close (P)"></button>
     </div>
@@ -104,7 +104,7 @@
         <option value="category">Categories: paint classes (biomes, areas, ground types)</option>
         <option value="objects">Objects: place points with kind, rotation and properties</option>
         <option value="notes">Notes: text notes pinned to the map</option>
-        <option value="height">Height: raise, lower, flatten, smooth (meters)</option>
+        <option value="height">Height: raise, lower, flatten, smooth</option>
         <option value="image">Picture: a sketch or reference stretched over the map</option>
       </select>
     </label>
@@ -124,19 +124,19 @@
   <form method="dialog">
     <h3>Map size</h3>
     <label class="for-new">Title <input name="title" value="New map" autocomplete="off"></label>
-    <div class="presets"></div>
-    <label>Center x, m <input name="cx" type="number" step="0.5"></label>
-    <label>Center z, m <input name="cz" type="number" step="0.5"></label>
-    <label>Width (x), m <input name="width" type="number" min="4" step="1"></label>
-    <label>Height (z), m <input name="height" type="number" min="4" step="1"></label>
-    <label>Cell
-      <select name="cell">
-        <option value="0.25">0.25 m</option>
-        <option value="0.4">0.4 m</option>
-        <option value="0.5">0.5 m</option>
-        <option value="1">1 m</option>
+    <label title="The numbers of the map (coordinates, sizes, heights) are in this unit: take the one of your engine">Units <select name="unit"></select></label>
+    <label class="unit-change" hidden>Numbers
+      <select name="convert">
+        <option value="convert">Convert: the map keeps its real size</option>
+        <option value="rename">Keep: only the name of the unit changes</option>
       </select>
     </label>
+    <div class="presets"></div>
+    <label><span>Center x, <span class="u">m</span></span> <input name="cx" type="number" step="any"></label>
+    <label><span>Center z, <span class="u">m</span></span> <input name="cz" type="number" step="any"></label>
+    <label><span>Width (x), <span class="u">m</span></span> <input name="width" type="number" min="0" step="any"></label>
+    <label><span>Height (z), <span class="u">m</span></span> <input name="height" type="number" min="0" step="any"></label>
+    <label>Cell <select name="cell"></select></label>
     <label class="for-new">Layers
       <select name="layers">
         <option value="same">The layers of the open map, empty</option>
@@ -145,7 +145,7 @@
       </select>
     </label>
     <p class="info small"></p>
-    <p class="muted small for-size">The map is a rectangle of square cells. Painted cells outside the new bounds are cut off, new cells are empty (height 0 m); objects, notes and pictures keep their place in meters. The layer files are written again. This cannot be undone.</p>
+    <p class="muted small for-size">The map is a rectangle of square cells. Painted cells outside the new bounds are cut off, new cells are empty (height 0); objects, notes and pictures keep their place. Converting to another unit multiplies every coordinate, size and height. The layer files are written again. This cannot be undone.</p>
     <p class="muted small for-new">The new map goes into an empty folder (the folder dialog can make one); the open map is saved first. Folder… opens either map later.</p>
     <div class="buttons">
       <button value="cancel" formnovalidate>Cancel</button>
@@ -189,7 +189,7 @@
         <tr><th>Ctrl+A · Ctrl+Shift+A · Ctrl+I</th><td>Select all (objects, or the whole area) · deselect the area · invert the area</td></tr>
         <tr><th>Enter · Esc</th><td>Apply · cancel moved or pasted cells (Esc also deselects)</td></tr>
         <tr><th>Delete · Ctrl+D</th><td>Delete selected objects or clear the selected area · duplicate selected objects</td></tr>
-        <tr><th>Arrows · Shift+arrows</th><td>Move selected objects by 0.25 m · 2 m</td></tr>
+        <tr><th>Arrows · Shift+arrows</th><td>Move selected objects by 0.25 m · 2 m (in other units: about as much)</td></tr>
         <tr><th>R · Shift+R</th><td>Rotate selected objects by 15° · −15° (moved cells: a quarter turn)</td></tr>
         <tr><th>Ctrl+Enter · Esc</th><td>In a note: save · cancel</td></tr>
         <tr><th>Ctrl+A · Esc</th><td>Select all objects of the layer · clear the selection</td></tr>
@@ -211,6 +211,7 @@
 <script src="js/png.js"></script>
 <script src="js/store.js"></script>
 <script src="js/folder.js"></script>
+<script src="js/units.js"></script>
 <script src="js/layers.js"></script>
 <script src="js/raster.js"></script>
 <script src="js/view3d.js"></script>

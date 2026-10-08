@@ -62,7 +62,7 @@ uniform vec4 u_color;
 out vec4 o;
 void main() { o = u_color; }`;
 
-  const CLOSE = { pitch: 45, dist: 20, fov: 40 }; // a close view, as a game camera above a character
+  const CLOSE = { pitch: 45, dist: 20, fov: 40 }; // a close view, as a game camera above a character (dist: m)
   const TEX = 2048; // px of the draped map
   const LIGHT = (() => { const L = [-0.5, 0.78, -0.38], l = Math.hypot(...L); return L.map(v => v / l); })();
 
@@ -110,7 +110,8 @@ void main() { o = u_color; }`;
   }
 
   class View3D {
-    /** panel: the element with a canvas; app: {world(), heightLayer(), layers(), metaVersion(), cursor(), viewCenter()}. */
+    /** panel: the element with a canvas; app: {world(), heightLayer(), layers(), metaVersion(), cursor(), viewCenter(),
+     *  unitK() (units per meter)}. */
     constructor(panel, app) {
       this.panel = panel;
       this.canvas = panel.querySelector('canvas');
@@ -340,6 +341,9 @@ void main() { o = u_color; }`;
       this.requestDraw();
     }
 
+    /** Units of the map per meter (1 for meters, 100 for centimeters...). */
+    k() { return (this.app.unitK && this.app.unitK()) || 1; }
+
     /** 'overview' (the whole map), 'top' (straight down), 'close' (a close view at the middle of the 2D view), 'view' (the 2D view). */
     preset(name) {
       const world = this.app.world();
@@ -349,7 +353,7 @@ void main() { o = u_color; }`;
       c.yaw = 0;
       c.fov = CLOSE.fov;
       if (name === 'close') {
-        c.pitch = CLOSE.pitch * Math.PI / 180; c.dist = CLOSE.dist; c.target = [vx, 0, vz];
+        c.pitch = CLOSE.pitch * Math.PI / 180; c.dist = CLOSE.dist * this.k(); c.target = [vx, 0, vz];
       } else if (name === 'top') {
         c.pitch = 89.5 * Math.PI / 180; c.dist = big / (2 * Math.tan(c.fov * Math.PI / 360)) * 1.05;
         c.target = mid;
@@ -401,7 +405,7 @@ void main() { o = u_color; }`;
         this.dragging = true;
         this.wheelTimer = setTimeout(() => { this.dragging = false; this.requestDraw(); }, 200);
         const world = this.app.world(), dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
-        this.cam.dist = Math.max(3, Math.min((world ? Math.max(world.width, world.height) : 500) * 4, this.cam.dist * Math.exp(dy * (e.ctrlKey ? 0.01 : 0.0015))));
+        this.cam.dist = Math.max(3 * this.k(), Math.min((world ? Math.max(world.width, world.height) : 500) * 4, this.cam.dist * Math.exp(dy * (e.ctrlKey ? 0.01 : 0.0015))));
         this.requestDraw();
       }, { passive: false });
       cv.addEventListener('dblclick', () => this.preset('overview'));
@@ -427,7 +431,7 @@ void main() { o = u_color; }`;
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.enable(gl.DEPTH_TEST);
       const c = this.cam, eye = this.eye();
-      const near = Math.max(0.05, c.dist * 0.01), far = c.dist * 4 + Math.max(world.width, world.height) * 3;
+      const near = Math.max(0.05 * this.k(), c.dist * 0.01), far = c.dist * 4 + Math.max(world.width, world.height) * 3;
       const mvp = mul(perspective(c.fov * Math.PI / 180, w / h, near, far), lookAt(eye, c.target, [0, 1, 0]));
       // terrain
       const T = this.terrain;
@@ -459,7 +463,7 @@ void main() { o = u_color; }`;
       gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
       const cur = this.app.cursor();
       if (cur) {
-        const g = this.groundAt(cur[0], cur[1]), top = g + Math.max(1.5, c.dist * 0.06), r = Math.max(0.4, c.dist * 0.012);
+        const g = this.groundAt(cur[0], cur[1]), top = g + Math.max(1.5 * this.k(), c.dist * 0.06), r = Math.max(0.4 * this.k(), c.dist * 0.012);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
           cur[0], g, cur[1], cur[0], top, cur[1],
           cur[0] - r, g, cur[1], cur[0] + r, g, cur[1], cur[0], g, cur[1] - r, cur[0], g, cur[1] + r,

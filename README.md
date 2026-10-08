@@ -15,7 +15,7 @@ properties on the right](docs/screenshot.jpg)
 - **Layers of five kinds** (and a picture layer for references):
   - *Masks* — density 0–100 % per cell: trees, grass, water, roads…
   - *Categories* — a class per cell: ground types, biomes, zones…
-  - *Height* — the terrain in meters.
+  - *Height* — the terrain.
   - *Objects* — placed things with a kind, position, rotation, footprint and properties: buildings, enemies, chests,
     spawn points, two-ended links such as shortcuts.
   - *Notes* — text pinned to the map.
@@ -29,8 +29,9 @@ properties on the right](docs/screenshot.jpg)
   is on a layer.
 - **3D preview** of the terrain with the visible layers draped over it, updated while you paint (WebGL2, with a
   software fallback).
-- **Maps of any size**: width and height in meters, cell size, resize later; start new maps from a basic set of
-  layers.
+- **Maps of any size and unit**: width, height and cell size in meters, centimeters (Unreal), feet, inches (Source),
+  pixels (2D) or plain units, so coordinates match your engine; resize or convert later; start new maps from a basic
+  set of layers.
 - **Files as the source of truth**: autosave into the project folder, which the app also watches — changes made by
   scripts or AI agents appear within a second and merge with your unsaved work.
 - Undo and redo, dockable panels, keyboard shortcuts.
@@ -60,9 +61,9 @@ simpler software view.
 
 ```
 my-world/
-  metadata.json        the map rectangle and the list of layers with their settings
+  metadata.json        the unit, the map rectangle and the list of layers with their settings
   layers/
-    height.png         16-bit grayscale: meters = offset + value × step
+    height.png         16-bit grayscale: height = offset + value × step
     ground.png         palette PNG: the index is the class
     trees.png          8-bit grayscale: 0–255 = density 0–100 %
     buildings.json     {"items": [{id, kind, x, z, yaw, w, d, …}, …]}
@@ -99,6 +100,7 @@ python3 -m http.server 8000      # then http://localhost:8000
 | `index.html`, `style.css` | The page |
 | `js/app.js` | Tools, panels, undo, saving and watching the folder |
 | `js/layers.js` | The layer types: drawing, files, merging |
+| `js/units.js` | Units of length: meters, centimeters, feet, inches, pixels |
 | `js/raster.js` | Shapes into cells, the selection mask, the magic wand |
 | `js/view.js`, `js/view3d.js` | The 2D map view, the 3D preview |
 | `js/dock.js` | The dockable panels |

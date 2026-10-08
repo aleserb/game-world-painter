@@ -15,8 +15,24 @@ level generator, an AI agent. This page describes the files; the app writes them
 
 ## Coordinates
 
-The map is a rectangle in meters on the ground plane, seen from above: **x** grows to the east (right), **z** to
-the south (down) — north is up. Heights are meters up.
+The map is a rectangle on the ground plane, seen from above: **x** grows to the east (right), **z** to the south
+(down) — north is up. Heights go up.
+
+All lengths — coordinates, sizes, heights — are plain numbers in the **unit** of the map (`unit` in `metadata.json`,
+meters by default), so they can match a game engine one to one:
+
+| `unit` | Name | Typical use |
+|--------|------|-------------|
+| `m` | Meters | Godot, Unity, Blender (the default) |
+| `cm` | Centimeters | Unreal Engine |
+| `ft` | Feet | Tabletop maps |
+| `in` | Inches | Source engine (Hammer units) |
+| `px` | Pixels | 2D games, tile maps (the grid steps in powers of two) |
+| `u` | Units | Any other scale |
+
+The unit names the numbers and sets the defaults of the app (brush sizes, steps, presets); nothing is converted when
+the files are read. The app's Map size dialog can convert a map to another unit (it multiplies every number) or only
+rename the unit. Another value of `unit` is shown as it is.
 
 Raster layers cover the rectangle with `cols` × `rows` square cells. Row 0 is the north edge, column 0 the west edge;
 pixel `(i, j)` of a layer file is the cell whose center is
@@ -31,7 +47,7 @@ A file of another size is resized to the grid when it is read (nearest pixel).
 ## metadata.json
 
 ```json
-{"version":3,"title":"Demo island","created":"…","world":{"x0":-128,"z0":-128,"width":256,"height":256,"cols":512,"rows":512},"layers":[
+{"version":3,"title":"Demo island","created":"…","unit":"m","world":{"x0":-128,"z0":-128,"width":256,"height":256,"cols":512,"rows":512},"layers":[
 {"id":"height","name":"Terrain height","group":"Terrain","type":"height","encoding":{"offset":-20,"step":0.001},"contour":1,"file":"layers/height.png", …},
 {"id":"trees","name":"Trees","group":"Greenery","type":"mask","color":"#2c6a2a","opacity":0.8,"file":"layers/trees.png", …}
 ]}
@@ -41,7 +57,8 @@ A file of another size is resized to the grid when it is read (nearest pixel).
 |-------|---------|
 | `version` | 3 |
 | `title`, `created` | The name of the map and a free text about where it comes from |
-| `world` | The map rectangle: the north-west corner `x0`, `z0`, the size `width` (along x) and `height` (along z) in meters, and the number of cells across (`cols`) and down (`rows`). The cells are square: `width / cols = height / rows`. (An older square form `{x0, z0, size, px}` is read too.) |
+| `unit` | The unit of every length: `m` (also when it is missing), `cm`, `ft`, `in`, `px`, `u` — see [Coordinates](#coordinates) |
+| `world` | The map rectangle: the north-west corner `x0`, `z0`, the size `width` (along x) and `height` (along z), and the number of cells across (`cols`) and down (`rows`). The cells are square: `width / cols = height / rows`. (An older square form `{x0, z0, size, px}` is read too.) |
 | `layers` | The layers, **bottom to top**; the app writes one per line |
 
 A layer entry:
@@ -55,10 +72,10 @@ A layer entry:
 | `visible`, `opacity`, `locked` | all | Defaults; each browser keeps its own view settings |
 | `color` | mask, objects, notes | The color it is drawn with (for notes: of the notes without their own color) |
 | `classes` | category | `[{name, color}]`; index 0 is “none” with color `null` |
-| `encoding` | height | `{offset, step}`: meters = offset + value × step |
-| `contour` | height | Contour lines every so many meters (0: none) |
+| `encoding` | height | `{offset, step}`: height = offset + value × step |
+| `contour` | height | Contour lines every so many units (0: none) |
 | `style` | objects | `marker` (a symbol), `footprint` (the object's rectangle) or `link` (two ends) |
-| `marker`, `size` | objects | The symbol — `circle`, `square`, `diamond`, `triangle`, `cross` — and its size in meters |
+| `marker`, `size` | objects | The symbol — `circle`, `square`, `diamond`, `triangle`, `cross` — and its size |
 | `label` | objects | A label template: `{kind}`, `{<field>}` or `{<property>}`, e.g. `{kind} ×{pack_size}` |
 | `blend` | image | `normal`, `multiply` (white is see-through) or `screen` (black is see-through) |
 | `rect` | image | `{x0, z0, width, height}`: where the picture lies if it does not cover the map |
@@ -72,7 +89,7 @@ Other fields are kept as they are, so a script can store its own settings on a l
 |------|------|------------------|
 | `mask` | 8-bit grayscale PNG | 0–255 = density 0–100 %: where something is and how much of it |
 | `category` | Palette (indexed) PNG | The palette index is the class (the position in `classes`); 0 is “none”. The palette colors are only for viewing |
-| `height` | 16-bit grayscale PNG | meters = `encoding.offset` + value × `encoding.step` (e.g. −20 + value / 1000: −20 … 45.535 m) |
+| `height` | 16-bit grayscale PNG | height = `encoding.offset` + value × `encoding.step` (in meters e.g. −20 + value / 1000: −20 … 45.535 m) |
 | `objects` | JSON | `{"items": [ … ]}`, one object per line (a plain array is read too) |
 | `notes` | JSON | `{"items": [ … ]}` |
 | `image` | PNG, WebP or JPEG | Any picture, stretched over the map (or over `rect`) |
@@ -95,7 +112,7 @@ and fully transparent pixels count as 0 / none. When heights do not fit the enco
 |-------|---------|
 | `id` | A number, unique in the layer |
 | `kind` | What it is: a model, an enemy type, a building type… |
-| `x`, `z` | The position in meters |
+| `x`, `z` | The position |
 | `yaw` | Rotation in degrees; positive turns from +x toward −z (counter-clockwise seen from above) |
 | `w`, `d`, `ox`, `oz` | Footprints: the size along the object's own x and z, and the offset of the rectangle from the position |
 | `a`, `b` | Links: the two ends `[x, z]` |

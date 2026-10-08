@@ -36,6 +36,7 @@ const S = {
   brush: {
     size: 6, strength: 100, hardness: 50, value: 100, cls: 1, mode: 'raise', amount: 1, target: 0, tolerance: 8,
     shape: 'rect', shapeFill: 'fill', feather: 0, area: 'rect', tolH: 0.25, contiguous: true,
+    k: 1, // the unit of the lengths above: units per meter (they are rescaled when a map in another unit opens)
   },
   addKind: '',
   sel: { layer: null, ids: new Set() },
@@ -120,7 +121,28 @@ function slider(min, max, step, value, onInput) {
 }
 
 const world = () => S.project.world;
-const mpp = () => world().width / world().cols; // meters per cell (the cells are square)
+const mpp = () => world().width / world().cols; // units per cell (the cells are square)
+
+// The unit of the map (js/units.js): the numbers are in it; defaults given in meters are scaled by its k.
+const mapUnit = () => ME.unitOf(S.project?.unit);
+const ul = () => mapUnit().label;
+/** A default given in meters, in the unit of the map. */
+const inUnit = m => +(m * mapUnit().k).toPrecision(6);
+/** The same, rounded to a tidy number (0.25 m, 25 cm, 10 in, 8 px). */
+const niceUnit = m => ME.nice(m * mapUnit().k);
+/** A length as text, with the unit: `digits` decimals in meters, fewer in small units. */
+const fmtLen = (v, digits = 1) => `${fmt(+(+v).toFixed(ME.unitDigits(mapUnit(), digits)))} ${ul()}`;
+const projOf = (w, unit) => ({ world: w, cols: w.cols, rows: w.rows, unit, k: ME.unitOf(unit).k });
+
+const BRUSH_LENGTHS = ['size', 'amount', 'target', 'feather', 'tolH'];
+/** The brush lengths follow the unit of the map: rescaled (a map in another unit opened, or converted), or only
+ *  marked as being in it (the unit was renamed: the numbers stay). */
+function syncBrushUnit(rescale = true) {
+  const b = S.brush, k = mapUnit().k, r = k / (b.k || 1);
+  if (r === 1) return;
+  if (rescale) for (const key of BRUSH_LENGTHS) b[key] = +(b[key] * r).toPrecision(4);
+  b.k = k;
+}
 
 function cellAt(x, z) {
   const w = world();
@@ -261,7 +283,7 @@ function metaBaseOf(list) {
 }
 
 function metadataText(project = S.project, list = S.layers) {
-  const head = { version: 3, title: project.title, created: project.created, world: project.world };
+  const head = { version: 3, title: project.title, created: project.created, unit: project.unit || 'm', world: project.world };
   const layers = list.map(l => ({ ...l.meta, file: l.file }));
   return JSON.stringify(head).slice(0, -1) + ',"layers":[\n' + layers.map(m => JSON.stringify(m)).join(',\n') + '\n]}\n';
 }
@@ -295,10 +317,10 @@ async function readLayer(layer) {
 
 /** Open a project (the object of metadata.json) from the folder. */
 async function openProject(project) {
-  S.project = { title: project.title || 'Map', created: project.created || '', world: ME.normWorld(project.world || EMPTY_WORLD) };
+  S.project = { title: project.title || 'Map', created: project.created || '', unit: project.unit || 'm', world: ME.normWorld(project.world || EMPTY_WORLD) };
   S.cols = S.project.world.cols;
   S.rows = S.project.world.rows;
-  S.proj = { world: S.project.world, cols: S.cols, rows: S.rows };
+  S.proj = projOf(S.project.world, S.project.unit);
   S.metaVersion = S.metaSaved = 0;
   S.metaBase = metaBaseOf(project.layers || []);
   S.sel = { layer: null, ids: new Set() };
@@ -320,6 +342,7 @@ async function openProject(project) {
   view.resize();
   restoreLayerView();
   restoreUi();
+  syncBrushUnit();
   toast(`${S.layers.length} layers loaded from ${folder.name}/`, 2000);
   if (!S.active) setActive([...S.layers].reverse().find(l => l.raster) || S.layers[S.layers.length - 1], false);
   renderAll();
@@ -374,7 +397,7 @@ async function newMapHere() {
       visible: true, opacity: 1, locked: true });
   }
   const project = { title: 'New map', created: `Started in GameWorld Painter on ${today()}`, world: EMPTY_WORLD };
-  await folder.write('metadata.json', metadataText(project, layers.map(m => makeLayer(m, { world: EMPTY_WORLD, cols: EMPTY_WORLD.cols, rows: EMPTY_WORLD.rows }))));
+  await folder.write('metadata.json', metadataText(project, layers.map(m => makeLayer(m, projOf(EMPTY_WORLD, 'm')))));
   await connectFolder(folder);
 }
 
@@ -503,8 +526,8 @@ function takeDiskContent(l, content) {
 /** metadata.json changed on the disk: merge the layer list (3-way, by id) and the settings (local changes win). */
 async function takeDiskMetadata(disk) {
   const dw = disk.world && ME.normWorld(disk.world), w = S.project.world;
-  if (!dw || ['x0', 'z0', 'width', 'height', 'cols', 'rows'].some(k => dw[k] !== w[k])) {
-    toast('The map size changed in metadata.json: the project is opened again', 4000);
+  if (!dw || ['x0', 'z0', 'width', 'height', 'cols', 'rows'].some(k => dw[k] !== w[k]) || (disk.unit || 'm') !== S.project.unit) {
+    toast('The map size or unit changed in metadata.json: the project is opened again', 4000);
     await openProject(disk);
     return;
   }
@@ -715,30 +738,31 @@ function render() {
   view3d.cursorTick();
 }
 
-/** The grid spacing in meters: the smallest of 1, 2, 5, 10... m that is at least 36 UI pixels wide. */
+/** The grid spacing: the smallest of 1, 2, 5, 10... units (powers of two in pixels) that is at least 36 UI pixels
+ *  wide, and not finer than the cells. */
 function gridStep() {
-  return [1, 2, 5, 10, 20, 50, 100].find(s => s * view.scale >= 36) || 100;
+  return ME.stepAtLeast(Math.max(36 / view.scale, mpp() * 0.999), mapUnit().pow2);
 }
 
 function drawGrid() {
-  const w = world(), step = gridStep();
+  const w = world(), step = gridStep(), every = mapUnit().pow2 ? 4 : 5;
   const [sx0, sy0] = view.toScreen(w.x0, w.z0), [sx1, sy1] = view.toScreen(w.x0 + w.width, w.z0 + w.height);
   ctx.font = '10px system-ui';
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
   for (const axis of [0, 1]) {
-    const start = Math.ceil((axis ? w.z0 : w.x0) / step) * step;
-    for (let v = start; v <= (axis ? w.z0 + w.height : w.x0 + w.width); v += step) {
-      const major = Math.round(v / step) % 5 === 0 || v === 0;
+    const end = Math.floor((axis ? w.z0 + w.height : w.x0 + w.width) / step + 1e-6);
+    for (let n = Math.ceil((axis ? w.z0 : w.x0) / step - 1e-6); n <= end; n++) {
+      const v = +(n * step).toPrecision(10), major = n % every === 0;
       ctx.strokeStyle = v === 0 ? 'rgba(240,163,94,0.55)' : major ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.12)';
       ctx.beginPath();
       if (axis) {
         const [, y] = view.toScreen(0, v);
         ctx.moveTo(sx0, y); ctx.lineTo(sx1, y);
-        if (major) ctx.fillText(`z ${v}`, Math.max(sx0, 0) + 3, y - 3);
+        if (major) ctx.fillText(`z ${fmt(v)}`, Math.max(sx0, 0) + 3, y - 3);
       } else {
         const [x] = view.toScreen(v, 0);
         ctx.moveTo(x, sy0); ctx.lineTo(x, sy1);
-        if (major) ctx.fillText(`x ${v}`, x + 3, Math.max(sy0, 0) + 11);
+        if (major) ctx.fillText(`x ${fmt(v)}`, x + 3, Math.max(sy0, 0) + 11);
       }
       ctx.stroke();
     }
@@ -750,9 +774,9 @@ function drawScaleBar() {
   let m, cells = 2, label;
   if (S.grid) {
     const g = gridStep(), n = Math.max(1, Math.ceil(90 / (g * view.scale)));
-    m = n * g; cells = n <= 12 ? n : 1; label = `${m} m · grid ${g} m`;
+    m = +(n * g).toPrecision(10); cells = n <= 12 ? n : 1; label = `${fmt(m)} ${ul()} · grid ${fmt(g)} ${ul()}`;
   } else {
-    m = [1, 2, 5, 10, 20, 50, 100, 200, 500].find(st => st * view.scale >= 90) || 500; label = `${m} m`;
+    m = ME.stepAtLeast(90 / view.scale, mapUnit().pow2); label = `${fmt(m)} ${ul()}`;
   }
   ctx.font = '11px system-ui';
   const len = m * view.scale, box = Math.max(len, ctx.measureText(label).width), x = view.w - 22 - (len + box) / 2, y = view.h - 18;
@@ -813,7 +837,7 @@ function drawOverlay() {
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
     for (const [x, y] of [[x0, y0], [x1, y1]]) { ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); }
-    const text = `${d.toFixed(1)} m`;
+    const text = fmtLen(d);
     ctx.font = '12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,13,20,0.9)';
     ctx.strokeText(text, (x0 + x1) / 2, (y0 + y1) / 2 - 6);
@@ -975,7 +999,7 @@ function floodFill(layer, x, z) {
   layer.refresh(...bb);
   layer.dirty = true;
   pushRasterUndo(layer, `fill on ${layer.meta.name}`, snap, bb);
-  toast(`Filled ${(count * mpp() * mpp()).toFixed(0)} m²`, 1500);
+  toast(`Filled ${m2(count)}`, 1500);
 }
 
 function pickValue(layer, x, z) {
@@ -1039,11 +1063,11 @@ function addObject(layer, x, z) {
   const kind = (S.addKind || kinds[0] || 'object').trim();
   const like = [...layer.items].reverse().find(i => i.kind === kind);
   const it = { id: layer.nextId(), kind, x: +x.toFixed(2), z: +z.toFixed(2), yaw: like?.yaw ?? 0 };
-  if (layer.meta.style === 'footprint') Object.assign(it, { w: like?.w ?? 2, d: like?.d ?? 2, ox: like?.ox ?? 0, oz: like?.oz ?? 0 });
+  if (layer.meta.style === 'footprint') Object.assign(it, { w: like?.w ?? inUnit(2), d: like?.d ?? inUnit(2), ox: like?.ox ?? 0, oz: like?.oz ?? 0 });
   const zone = zoneAt(x, z);
   if (zone) it.zone = zone;
   if (like?.props) it.props = structuredClone(like.props);
-  if (layer.meta.style === 'link') { it.a = [+(x - 3).toFixed(2), +z.toFixed(2)]; it.b = [+(x + 3).toFixed(2), +z.toFixed(2)]; }
+  if (layer.meta.style === 'link') { const r = inUnit(3); it.a = [+(x - r).toFixed(2), +z.toFixed(2)]; it.b = [+(x + r).toFixed(2), +z.toFixed(2)]; }
   editObjects(layer, `add ${kind}`, () => layer.items.push(it));
   select(layer, [it.id]);
 }
@@ -1102,7 +1126,7 @@ const AREA_MODES = { rect: 'Rectangle', ellipse: 'Ellipse', free: 'Lasso', polyg
 const CLICK_SHAPES = ['polygon', 'line']; // drawn point by point
 
 const cellToWorld = (cx, cy) => [world().x0 + cx * mpp(), world().z0 + cy * mpp()];
-const m2 = cells => `${(cells * mpp() * mpp()).toFixed(0)} m²`;
+const m2 = cells => `${fmt(+(cells * mpp() * mpp()).toPrecision(6)).replace(/\.\d+$/, '')} ${ul()}²`;
 
 /** Paint a coverage (ME.shapeCoverage) into a raster layer with the brush settings, inside the selected area.
  *  full: the whole value (fill), else the strength of the brush. */
@@ -1158,9 +1182,9 @@ function invertArea() {
   setArea(m);
 }
 
-function growArea(meters) {
+function growArea(len) {
   commitFloat();
-  if (S.area) setArea(ME.growMask(S.area.mask, S.cols, S.rows, Math.round(meters / mpp())));
+  if (S.area) setArea(ME.growMask(S.area.mask, S.cols, S.rows, Math.sign(len) * Math.max(1, Math.round(Math.abs(len) / mpp()))));
 }
 
 function inArea(x, z) { const i = cellAt(x, z); return i >= 0 && !!S.area && !!S.area.mask[i]; }
@@ -1568,11 +1592,11 @@ function drawDraft() {
   }
   let text = '';
   if (d.type === 'rect' || d.type === 'ellipse') {
-    text = `${Math.abs(d.pts[1][0] - d.pts[0][0]).toFixed(1)} × ${Math.abs(d.pts[1][1] - d.pts[0][1]).toFixed(1)} m`;
+    text = `${fmtLen(Math.abs(d.pts[1][0] - d.pts[0][0])).split(' ')[0]} × ${fmtLen(Math.abs(d.pts[1][1] - d.pts[0][1]))}`;
   } else if (d.type === 'line') {
     let len = 0;
     for (let k = 1; k < d.pts.length; k++) len += Math.hypot(d.pts[k][0] - d.pts[k - 1][0], d.pts[k][1] - d.pts[k - 1][1]);
-    text = `${len.toFixed(1)} m`;
+    text = fmtLen(len);
   }
   if (text) {
     const [x, y] = pts[pts.length - 1];
@@ -1717,7 +1741,7 @@ function renderNoteProps(box, L, items) {
     text.value = it.text || '';
     box.append(row('Text', text));
     const num = key => {
-      const input = el('input', { type: 'number', step: 0.5, value: it[key], style: 'width:54px', onchange: () => edit('move note', o => { o[key] = +(+input.value).toFixed(2); }) });
+      const input = el('input', { type: 'number', step: niceUnit(0.5), value: it[key], style: 'width:54px', onchange: () => edit('move note', o => { o[key] = +(+input.value).toFixed(2); }) });
       return input;
     };
     box.append(row('Position', el('span', { class: 'muted' }, 'x'), num('x'), el('span', { class: 'muted' }, 'z'), num('z')));
@@ -1925,7 +1949,7 @@ function endDrag() {
     const inBox = it => it.x >= x0 && it.x <= x1 && it.z >= z0 && it.z <= z1;
     // the selected objects layer, else the top visible unlocked one with something in the box
     const L = S.active?.hasItems ? S.active : objectLayersTopDown().find(l => l.items.some(inBox));
-    if (L && L.meta.visible && (x1 - x0 > 0.1 || z1 - z0 > 0.1)) {
+    if (L && L.meta.visible && Math.max(x1 - x0, z1 - z0) * view.scale > 3) {
       if (L !== S.active) setActive(L);
       const ids = new Set(d.add && S.sel.layer === L ? S.sel.ids : []);
       for (const it of L.items) if (inBox(it)) ids.add(it.id);
@@ -2031,14 +2055,14 @@ window.addEventListener('keydown', e => {
     const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0, dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
     if (S.sel.ids.size) {
       e.preventDefault();
-      const d = e.shiftKey ? 2 : 0.25;
+      const d = e.shiftKey ? niceUnit(2) : niceUnit(0.25); // 0.25 m, Shift: 2 m (in the unit of the map)
       moveSelected(dx * d, dy * d);
       return;
     }
     if (S.float || (S.area && S.tool === 'area' && S.active?.raster)) { // move the cells by one cell (Shift: 2 m)
       e.preventDefault();
       if (!S.float && !liftArea(false)) return;
-      const n = e.shiftKey ? Math.round(2 / mpp()) : 1;
+      const n = e.shiftKey ? Math.max(1, Math.round(niceUnit(2) / mpp())) : 1;
       placeFloat(S.float.x + dx * n, S.float.y + dy * n);
       renderOptions();
       return;
@@ -2054,7 +2078,7 @@ window.addEventListener('keydown', e => {
   if (e.key === '[' || e.key === '{' || e.key === ']' || e.key === '}') {
     const up = e.key === ']' || e.key === '}';
     if (e.shiftKey) S.brush.strength = Math.max(1, Math.min(100, S.brush.strength + (up ? 10 : -10)));
-    else S.brush.size = Math.max(0.25, Math.min(80, +(S.brush.size * (up ? 1.25 : 0.8)).toFixed(2)));
+    else S.brush.size = Math.max(niceUnit(0.25), Math.min(inUnit(80), +(S.brush.size * (up ? 1.25 : 0.8)).toPrecision(4)));
     renderOptions(); saveUi(); requestRender();
     return;
   }
@@ -2181,7 +2205,7 @@ function renderOptions() {
   const head = el('div', { class: 'section-head' }, toolName(t), el('span', { class: 'muted' }, L ? `· ${L.meta.name}` : ''));
   box.append(head);
   const brushRows = () => [
-    row('Size', ...slider(0.25, 80, 0.25, b.size, v => { b.size = v; saveUi(); }), el('span', { class: 'muted' }, 'm')),
+    row('Size', ...slider(niceUnit(0.25), inUnit(80), niceUnit(0.25), b.size, v => { b.size = v; saveUi(); }), unit(ul())),
   ];
   const strengthRows = (label = 'Strength') => [
     row(label, ...slider(1, 100, 1, b.strength, v => { b.strength = v; saveUi(); }), el('span', { class: 'muted' }, '%')),
@@ -2219,8 +2243,8 @@ function renderOptions() {
       }, m[0].toUpperCase() + m.slice(1))))));
     }
     box.append(...brushRows(), ...strengthRows());
-    if (t === 'brush' && b.mode !== 'flatten') box.append(row('Amount', ...slider(0.05, 10, 0.05, b.amount, v => { b.amount = v; saveUi(); }), el('span', { class: 'muted' }, 'm')));
-    if (t === 'brush' && b.mode === 'flatten') box.append(row('Target', ...slider(-15, 40, 0.05, b.target, v => { b.target = v; saveUi(); }), el('span', { class: 'muted' }, 'm')));
+    if (t === 'brush' && b.mode !== 'flatten') box.append(row('Amount', ...slider(niceUnit(0.05), inUnit(10), niceUnit(0.05), b.amount, v => { b.amount = v; saveUi(); }), unit(ul())));
+    if (t === 'brush' && b.mode === 'flatten') box.append(row('Target', ...slider(inUnit(-15), inUnit(40), niceUnit(0.05), b.target, v => { b.target = v; saveUi(); }), unit(ul())));
     box.append(el('div', { class: 'hint' }, t === 'smooth' ? 'Evens out bumps under the brush.'
       : b.mode === 'flatten' ? 'Pulls the ground toward Target. Alt+click picks the height under the cursor.'
         : `${b.mode === 'raise' ? 'Raises' : 'Lowers'} the ground by up to Amount in one stroke.`));
@@ -2235,7 +2259,7 @@ function renderOptions() {
     box.append(row('Kind', input));
     box.append(el('div', { class: 'hint' }, 'Click the map to place. The size and properties are copied from the last object of the same kind.'));
   } else if (t === 'measure') {
-    box.append(el('div', { class: 'hint' }, 'Drag to measure a distance in meters.'));
+    box.append(el('div', { class: 'hint' }, `Drag to measure a distance (in ${mapUnit().name.toLowerCase()}).`));
   } else if (t === 'pan') {
     box.append(el('div', { class: 'hint' }, 'Drag to pan. Wheel or pinch to zoom; F fits the map.'));
   } else {
@@ -2261,11 +2285,11 @@ function paintValueRows(L, fill = false) {
   const b = S.brush, set = (key, v) => { b[key] = v; saveUi(); }, out = [];
   if (L.type === 'mask') out.push(row('Value', ...slider(0, 100, 1, b.value, v => set('value', v)), unit('%')));
   else if (L.type === 'category') out.push(classPicker(L));
-  else if (fill) out.push(row('Height', ...slider(-15, 40, 0.05, b.target, v => set('target', v)), unit('m')));
+  else if (fill) out.push(row('Height', ...slider(inUnit(-15), inUnit(40), niceUnit(0.05), b.target, v => set('target', v)), unit(ul())));
   else {
     out.push(row('Mode', seg({ raise: 'Raise', lower: 'Lower', flatten: 'Flatten' }, b.mode, m => { b.mode = m; saveUi(); renderOptions(); requestRender(); })));
-    if (b.mode === 'flatten') out.push(row('Target', ...slider(-15, 40, 0.05, b.target, v => set('target', v)), unit('m')));
-    else out.push(row('Amount', ...slider(0.05, 10, 0.05, b.amount, v => set('amount', v)), unit('m')));
+    if (b.mode === 'flatten') out.push(row('Target', ...slider(inUnit(-15), inUnit(40), niceUnit(0.05), b.target, v => set('target', v)), unit(ul())));
+    else out.push(row('Amount', ...slider(niceUnit(0.05), inUnit(10), niceUnit(0.05), b.amount, v => set('amount', v)), unit(ul())));
   }
   if (!fill && L.type !== 'category') out.push(row('Strength', ...slider(1, 100, 1, b.strength, v => set('strength', v)), unit('%')));
   return out;
@@ -2283,8 +2307,8 @@ function renderShapeOptions(box, L) {
   const b = S.brush, redo = () => { saveUi(); renderOptions(); requestRender(); };
   box.append(row('Shape', seg(SHAPES, b.shape, k => { b.shape = k; S.draft = null; redo(); })));
   if (b.shape !== 'line') box.append(row('Draw', seg({ fill: 'Filled', outline: 'Outline' }, b.shapeFill, k => { b.shapeFill = k; redo(); })));
-  if (b.shape === 'line' || b.shapeFill === 'outline') box.append(row('Width', ...slider(0.25, 80, 0.25, b.size, v => { b.size = v; saveUi(); requestRender(); }), unit('m')));
-  if (L.type !== 'category') box.append(row('Soft edge', ...slider(0, 20, 0.25, b.feather, v => { b.feather = v; saveUi(); }), unit('m')));
+  if (b.shape === 'line' || b.shapeFill === 'outline') box.append(row('Width', ...slider(niceUnit(0.25), inUnit(80), niceUnit(0.25), b.size, v => { b.size = v; saveUi(); requestRender(); }), unit(ul())));
+  if (L.type !== 'category') box.append(row('Soft edge', ...slider(0, inUnit(20), niceUnit(0.25), b.feather, v => { b.feather = v; saveUi(); }), unit(ul())));
   box.append(...paintValueRows(L));
   box.append(el('div', { class: 'hint' }, SHAPE_HINTS[b.shape] + ' Key U again: the next shape.'));
   box.append(clipOption());
@@ -2302,14 +2326,14 @@ function renderAreaOptions(box, L) {
   const b = S.brush, F = S.float, A = S.area, can = !!L.raster;
   box.append(row('Mode', seg(AREA_MODES, b.area, k => { b.area = k; S.draft = null; saveUi(); renderOptions(); requestRender(); })));
   if (b.area === 'wand') {
-    if (L.type === 'height') box.append(row('Tolerance', ...slider(0, 10, 0.05, b.tolH, v => { b.tolH = v; saveUi(); }), unit('m')));
+    if (L.type === 'height') box.append(row('Tolerance', ...slider(0, inUnit(10), niceUnit(0.05), b.tolH, v => { b.tolH = v; saveUi(); }), unit(ul())));
     else if (L.type === 'mask') box.append(row('Tolerance', ...slider(0, 100, 1, b.tolerance, v => { b.tolerance = v; saveUi(); }), unit('%')));
     const cb = el('input', { type: 'checkbox', checked: b.contiguous, onchange: () => { b.contiguous = cb.checked; saveUi(); } });
     box.append(row('', el('label', { class: 'check' }, cb, ' Connected cells only')));
   }
   const btn = (text, title, fn, on = true) => el('button', { title, disabled: !on, onclick: fn }, text);
   if (F) {
-    box.append(el('div', { class: 'hint area-hint' }, `Floating (${F.label}) on ${F.layer.meta.name}: drag it into place; arrows move it by a cell (Shift: 2 m). Enter or a click outside applies, Esc cancels, Delete drops it.`));
+    box.append(el('div', { class: 'hint area-hint' }, `Floating (${F.label}) on ${F.layer.meta.name}: drag it into place; arrows move it by a cell (Shift: ${fmtLen(niceUnit(2))}). Enter or a click outside applies, Esc cancels, Delete drops it.`));
     box.append(el('div', { class: 'layer-actions wrap' },
       btn('↻ 90°', 'Turn a quarter clockwise (R)', () => transformFloat('cw')),
       btn('⇆ Flip', 'Flip left-right', () => transformFloat('h')),
@@ -2320,7 +2344,7 @@ function renderAreaOptions(box, L) {
   }
   if (A) {
     const [x0, y0, x1, y1] = A.bbox;
-    box.append(row('Selected', el('span', {}, `${m2(A.count)} (${((x1 - x0) * mpp()).toFixed(1)} × ${((y1 - y0) * mpp()).toFixed(1)} m)`)));
+    box.append(row('Selected', el('span', {}, `${m2(A.count)} (${fmtLen((x1 - x0) * mpp()).split(' ')[0]} × ${fmtLen((y1 - y0) * mpp())})`)));
   }
   box.append(el('div', { class: 'layer-actions wrap' },
     btn('Copy', 'Copy the cells of the selected layer (Ctrl+C)', () => copySelection(false), !!A && can),
@@ -2331,8 +2355,8 @@ function renderAreaOptions(box, L) {
   box.append(el('div', { class: 'layer-actions wrap' },
     btn('All', 'Select all (Ctrl+A)', selectAllArea),
     btn('Invert', 'Ctrl+I', invertArea),
-    btn('Grow 1 m', 'Make the area 1 m bigger', () => growArea(1), !!A),
-    btn('Shrink 1 m', 'Make the area 1 m smaller', () => growArea(-1), !!A),
+    btn(`Grow ${fmtLen(niceUnit(1))}`, `Make the area ${fmtLen(niceUnit(1))} bigger`, () => growArea(niceUnit(1)), !!A),
+    btn(`Shrink ${fmtLen(niceUnit(1))}`, `Make the area ${fmtLen(niceUnit(1))} smaller`, () => growArea(-niceUnit(1)), !!A),
     btn('Deselect', 'Esc', deselectArea, !!A)));
   if (A && can) box.append(el('h4', {}, 'Fill with'), ...paintValueRows(L, true));
   box.append(el('div', { class: 'hint' }, `${AREA_HINTS[b.area]} Shift adds, Alt subtracts. Drag inside the area to move its cells (Ctrl/Cmd: a copy). Brushes, shapes and fills paint only inside the area. Key L again: the next way to select, W: magic wand.`));
@@ -2685,7 +2709,7 @@ function renderSelectionProps(box) {
     const [x0, y0, x1, y1] = S.area.bbox, can = !!S.active?.raster;
     box.append(el('div', { class: 'section-head' }, 'Selected area'));
     box.append(row('Area', el('span', {}, m2(S.area.count))));
-    box.append(row('Bounds', el('span', {}, `${((x1 - x0) * mpp()).toFixed(1)} × ${((y1 - y0) * mpp()).toFixed(1)} m`)));
+    box.append(row('Bounds', el('span', {}, `${fmtLen((x1 - x0) * mpp()).split(' ')[0]} × ${fmtLen((y1 - y0) * mpp())}`)));
     const btn = (text, fn, on = true) => el('button', { disabled: !on, onclick: fn }, text);
     box.append(el('div', { class: 'layer-actions wrap' },
       btn('Copy', () => copySelection(false), can), btn('Cut', () => copySelection(true), can), btn('Fill', fillArea, can),
@@ -2765,13 +2789,13 @@ function renderLayerProps(box) {
   if (m.type === 'mask') {
     let sum = 0;
     for (const v of L.data) sum += v;
-    box.append(row('Covers', el('span', {}, `${(sum / 255 * mpp() * mpp()).toFixed(0)} m² (full density)`)));
+    box.append(row('Covers', el('span', {}, `${m2(sum / 255)} (full density)`)));
   }
   if (m.type === 'height') {
-    const c = el('input', { type: 'number', min: 0, max: 20, step: 0.5, value: m.contour, onchange: () => setMeta(L, 'contour', +c.value, 'contour lines') });
-    box.append(row('Contours every', c, el('span', { class: 'muted' }, 'm (0 = off)')));
-    const e = m.encoding || { offset: -20, step: 0.001 };
-    box.append(row('File', el('span', { class: 'small' }, `16-bit PNG: meters = ${e.offset} + value × ${e.step} (${e.offset} … ${+(e.offset + 65535 * e.step).toFixed(1)} m)`)));
+    const c = el('input', { type: 'number', min: 0, max: inUnit(20), step: niceUnit(0.5), value: m.contour, onchange: () => setMeta(L, 'contour', +c.value, 'contour lines') });
+    box.append(row('Contours every', c, el('span', { class: 'muted' }, `${ul()} (0 = off)`)));
+    const e = m.encoding;
+    box.append(row('File', el('span', { class: 'small' }, `16-bit PNG: ${mapUnit().name.toLowerCase()} = ${fmt(e.offset)} + value × ${e.step} (${fmt(e.offset)} … ${fmtLen(e.offset + 65535 * e.step)})`)));
     box.append(row('', el('button', { onclick: show3d }, '3D preview (P)')));
   }
   if (m.type === 'category') box.append(classesEditor(L));
@@ -2786,8 +2810,8 @@ function renderLayerProps(box) {
     if (m.style !== 'footprint') {
       const mk = el('select', { onchange: () => setMeta(L, 'marker', mk.value, 'marker') },
         ...MARKERS.map(k => el('option', { value: k, selected: m.marker === k }, k)));
-      const size = el('input', { type: 'number', min: 0.2, max: 20, step: 0.1, value: m.size, onchange: () => setMeta(L, 'size', +size.value, 'marker size') });
-      box.append(row('Marker', mk, size, el('span', { class: 'muted' }, 'm')));
+      const size = el('input', { type: 'number', min: inUnit(0.2), max: inUnit(20), step: niceUnit(0.1), value: m.size, onchange: () => setMeta(L, 'size', +size.value, 'marker size') });
+      box.append(row('Marker', mk, size, unit(ul())));
     }
     const lab = el('input', { value: m.label || '', placeholder: '{kind}', onchange: () => setMeta(L, 'label', lab.value, 'label') });
     box.append(row('Label', lab));
@@ -2853,7 +2877,7 @@ function classesEditor(L) {
     color.addEventListener('change', () => { const cl = structuredClone(L.meta.classes); cl[k].color = color.value; setMeta(L, 'classes', cl, 'class color'); renderOptions(); });
     const edit = el('button', { class: 'icon-btn', title: 'Rename', onclick: ev => { ev.stopPropagation(); name.focus(); name.select(); } }, ME.icon('pencil'));
     const del = k === 0 ? el('span') : el('button', { class: 'icon-btn', title: 'Delete the class (its cells become “none”)', onclick: ev => { ev.stopPropagation(); deleteClass(L, k); } }, ME.icon('trash-2'));
-    const r = el('div', { class: 'class-row' + (S.brush.cls === k ? ' on' : ''), title: `${(counts[k] * mpp() * mpp()).toFixed(0)} m² — click to paint this class`, onclick: ev => {
+    const r = el('div', { class: 'class-row' + (S.brush.cls === k ? ' on' : ''), title: `${m2(counts[k])} — click to paint this class`, onclick: ev => {
       if (ev.target.tagName === 'INPUT') return;
       S.brush.cls = k; saveUi(); renderOptions(); renderProps();
     } }, el('span', { class: 'num' }, String(k)), color, name, k === 0 ? el('span') : edit, del);
@@ -2895,7 +2919,7 @@ function renderObjectProps(box, L, items) {
   box.append(row('Kind', kind));
   if (items.length === 1) {
     const it = items[0];
-    const num = (key, step = 0.1) => {
+    const num = (key, step = niceUnit(0.1)) => {
       const input = el('input', { type: 'number', step, value: it[key] ?? 0, style: 'width:54px', onchange: () => edit(key, o => { o[key] = +(+input.value).toFixed(2); }) });
       return input;
     };
@@ -2906,13 +2930,13 @@ function renderObjectProps(box, L, items) {
     }
     if (it.a && it.b) {
       for (const end of ['a', 'b']) {
-        const ex = el('input', { type: 'number', step: 0.1, value: it[end][0], style: 'width:54px' });
-        const ez = el('input', { type: 'number', step: 0.1, value: it[end][1], style: 'width:54px' });
+        const ex = el('input', { type: 'number', step: niceUnit(0.1), value: it[end][0], style: 'width:54px' });
+        const ez = el('input', { type: 'number', step: niceUnit(0.1), value: it[end][1], style: 'width:54px' });
         const set = () => edit('end ' + end, o => { o[end] = [+(+ex.value).toFixed(2), +(+ez.value).toFixed(2)]; });
         ex.onchange = set; ez.onchange = set;
         box.append(row(`End ${end.toUpperCase()}`, el('span', { class: 'muted' }, 'x'), ex, el('span', { class: 'muted' }, 'z'), ez));
       }
-      box.append(row('Length', el('span', {}, `${Math.hypot(it.b[0] - it.a[0], it.b[1] - it.a[1]).toFixed(1)} m`)));
+      box.append(row('Length', el('span', {}, fmtLen(Math.hypot(it.b[0] - it.a[0], it.b[1] - it.a[1])))));
     }
     const zone = el('input', { value: it.zone || '', onchange: () => edit('zone', o => { if (zone.value.trim()) o.zone = zone.value.trim(); else delete o.zone; }) });
     box.append(row('Zone', zone));
@@ -2950,14 +2974,8 @@ function parseValue(s) {
 
 // ------------------------------------------------------------------------------------------------ map size, new map
 
-// The map is a rectangle of square cells: world = {x0, z0 (the north-west corner, m), width, height (m), cols, rows}.
-const MAP_PRESETS = {
-  small: { label: '128 m', cx: 0, cz: 0, width: 128, height: 128, cell: 0.25, title: '128 × 128 m, cells of 0.25 m' },
-  medium: { label: '256 m', cx: 0, cz: 0, width: 256, height: 256, cell: 0.25, title: '256 × 256 m, cells of 0.25 m' },
-  large: { label: '512 m', cx: 0, cz: 0, width: 512, height: 512, cell: 0.5, title: '512 × 512 m, cells of 0.5 m' },
-  wide: { label: '512 × 256 m', cx: 0, cz: 0, width: 512, height: 256, cell: 0.5, title: '512 × 256 m, cells of 0.5 m' },
-  huge: { label: '1 km', cx: 0, cz: 0, width: 1024, height: 1024, cell: 1, title: '1024 × 1024 m, cells of 1 m' },
-};
+// The map is a rectangle of square cells: world = {x0, z0 (the north-west corner), width, height, cols, rows}, in the unit
+// of the map (js/units.js: its presets and cell sizes).
 const MAX_PX = 2048;
 
 const fmt = v => String(+(+v).toFixed(3)).replace('-', '−');
@@ -2970,60 +2988,182 @@ function readMapForm(form) {
   return { x0: +(cx - W / 2).toFixed(4), z0: +(cz - H / 2).toFixed(4), width: W, height: H, cols, rows };
 }
 
+/** The same bounds and cells, up to rounding (half a cell). */
+function sameWorld(a, b) {
+  const tol = b.width / b.cols / 2;
+  return a.cols === b.cols && a.rows === b.rows && ['x0', 'z0', 'width', 'height'].every(k => Math.abs(a[k] - b[k]) <= tol);
+}
+
+/** The Map size dialog (mode 'size') and the New map dialog ('new'). The units: a new map takes the unit chosen; for the
+ *  open map another unit either converts its numbers (the map keeps its real size) or only renames the unit. */
 function openMapDialog(mode) {
   if (mode === 'size' && !S.project) return;
   const dlg = $('#map-dlg'), form = dlg.querySelector('form'), f = n => form.elements.namedItem(n);
-  const w = S.project ? S.project.world : EMPTY_WORLD, cell = +(w.width / w.cols).toFixed(4);
+  const w = S.project ? S.project.world : EMPTY_WORLD, from = S.project?.unit || 'm';
   dlg.querySelector('h3').textContent = mode === 'new' ? 'New map' : 'Map size';
   dlg.querySelectorAll('.for-new').forEach(e => { e.hidden = mode !== 'new'; });
   dlg.querySelectorAll('.for-size').forEach(e => { e.hidden = mode !== 'size'; });
-  const sel = f('cell');
-  if (![...sel.options].some(o => +o.value === cell)) sel.append(el('option', { value: String(cell) }, `${cell} m`));
+  const unitSel = f('unit'), conv = f('convert'), convRow = conv.closest('label'), sel = f('cell');
+  unitSel.innerHTML = '';
+  const ids = Object.keys(ME.UNITS).concat(ME.UNITS[from] ? [] : [from]);
+  for (const id of ids) { const u = ME.unitOf(id); unitSel.append(el('option', { value: id }, `${u.name} (${u.label})${u.note ? ' — ' + u.note : ''}`)); }
+  unitSel.value = from;
+  conv.value = 'convert';
+  const u = () => ME.unitOf(unitSel.value);
+  // the numbers of the open map in the unit chosen: converted, or as they are
+  const factor = () => (mode === 'size' && conv.value === 'convert' && ME.unitFactor(from, unitSel.value)) || 1;
+  let shownFactor = 1;
+  const fillCells = c => {
+    const list = [...u().cells];
+    if (c > 0 && !list.some(v => Math.abs(v - c) < 1e-9)) list.push(c);
+    sel.innerHTML = '';
+    for (const v of list.sort((a, b) => a - b)) sel.append(el('option', { value: String(v) }, `${fmt(v)} ${u().label}`));
+    const o = [...sel.options].find(o => Math.abs(+o.value - c) < 1e-9);
+    if (o) sel.value = o.value;
+  };
   const set = (cx, cz, width, height, c) => {
     f('cx').value = +(+cx).toFixed(3); f('cz').value = +(+cz).toFixed(3);
     f('width').value = +(+width).toFixed(3); f('height').value = +(+height).toFixed(3);
-    sel.value = [...sel.options].find(o => +o.value === c)?.value || sel.value;
+    fillCells(+(+c).toPrecision(10));
     update();
   };
+  const asNow = () => {
+    const k = factor();
+    set((w.x0 + w.width / 2) * k, (w.z0 + w.height / 2) * k, w.width * k, w.height * k, w.width / w.cols * k);
+  };
   const presets = dlg.querySelector('.presets');
-  presets.innerHTML = '';
-  if (S.project) presets.append(el('button', { type: 'button', title: 'The size of the open map', onclick: () => set(w.x0 + w.width / 2, w.z0 + w.height / 2, w.width, w.height, cell) }, 'As now'));
-  for (const p of Object.values(MAP_PRESETS)) presets.append(el('button', { type: 'button', title: p.title, onclick: () => set(p.cx, p.cz, p.width, p.height, p.cell) }, p.label));
+  const renderUnit = () => {
+    const L = u().label;
+    presets.innerHTML = '';
+    if (S.project) presets.append(el('button', { type: 'button', title: 'The size of the open map', onclick: asNow }, 'As now'));
+    for (const [W, H, c] of u().presets) {
+      presets.append(el('button', { type: 'button', title: `${fmt(W)} × ${fmt(H)} ${L}, cells of ${fmt(c)} ${L}`, onclick: () => set(0, 0, W, H, c) },
+        W === H ? `${fmt(W)} ${L}` : `${fmt(W)} × ${fmt(H)} ${L}`));
+    }
+    dlg.querySelectorAll('.u').forEach(e => { e.textContent = L; });
+    const changed = mode === 'size' && unitSel.value !== from;
+    convRow.hidden = !changed;
+    conv.querySelector('[value=convert]').disabled = !ME.unitFactor(from, unitSel.value);
+    if (changed && !ME.unitFactor(from, unitSel.value)) conv.value = 'rename';
+  };
+  const unitChanged = () => {
+    renderUnit();
+    if (mode === 'new') {
+      const p = u().presets[1];
+      set(0, 0, p[0], p[1], p[2]);
+    } else { // what is in the fields, in the new numbers
+      const r = factor() / shownFactor;
+      set(+f('cx').value * r, +f('cz').value * r, +f('width').value * r, +f('height').value * r, +sel.value * r);
+    }
+    shownFactor = factor();
+  };
+  unitSel.onchange = unitChanged;
+  conv.onchange = unitChanged;
   const ok = dlg.querySelector('.ok');
   ok.textContent = mode === 'new' ? 'Choose a folder and create' : 'Apply';
   f('title').value = 'New map';
   f('layers').value = S.project ? 'same' : 'basic';
   f('layers').querySelector('[value=same]').disabled = !S.project;
   function update() {
-    const nw = readMapForm(form), info = dlg.querySelector('.info');
+    const nw = readMapForm(form), info = dlg.querySelector('.info'), L = u().label;
     ok.disabled = !nw || Math.min(nw.cols, nw.rows) < 16 || Math.max(nw.cols, nw.rows) > MAX_PX;
     if (!nw) { info.textContent = 'Fill in the numbers.'; return; }
     const rasters = mode === 'new' ? 10 : S.layers.filter(l => l.raster).length;
     const mb = Math.round(rasters * nw.cols * nw.rows * 5.5 / 1e6);
-    let text = `x ${fmt(nw.x0)} … ${fmt(nw.x0 + nw.width)}, z ${fmt(nw.z0)} … ${fmt(nw.z0 + nw.height)} m: ${fmt(nw.width)} × ${fmt(nw.height)} m, ` +
-      `${nw.cols} × ${nw.rows} cells of ${fmt(nw.width / nw.cols)} m (about ${mb} MB in the browser).`;
+    let text = `x ${fmt(nw.x0)} … ${fmt(nw.x0 + nw.width)}, z ${fmt(nw.z0)} … ${fmt(nw.z0 + nw.height)} ${L}: ${fmt(nw.width)} × ${fmt(nw.height)} ${L}, ` +
+      `${nw.cols} × ${nw.rows} cells of ${fmt(nw.width / nw.cols)} ${L} (about ${mb} MB in the browser).`;
     if (Math.max(nw.cols, nw.rows) > MAX_PX) text += ` At most ${MAX_PX} cells on a side: take bigger cells.`;
     if (Math.min(nw.cols, nw.rows) < 16) text += ' At least 16 cells on a side.';
     if (mode === 'size') {
-      const e = 1e-6, inside = nw.x0 <= w.x0 + e && nw.z0 <= w.z0 + e && nw.x0 + nw.width >= w.x0 + w.width - e && nw.z0 + nw.height >= w.z0 + w.height - e;
+      const k = factor(), e = 1e-6 * k, cw = { x0: w.x0 * k, z0: w.z0 * k, width: w.width * k, height: w.height * k };
+      const inside = nw.x0 <= cw.x0 + e && nw.z0 <= cw.z0 + e && nw.x0 + nw.width >= cw.x0 + cw.width - e && nw.z0 + nw.height >= cw.z0 + cw.height - e;
       text += inside ? '' : ' Part of the painted map is outside: it is cut off.';
+      if (unitSel.value !== from) {
+        text += k !== 1 ? ` Every coordinate, size and height is multiplied by ${+k.toPrecision(6)}.`
+          : ` The numbers stay as they are: ${fmt(w.width)} ${ME.unitOf(from).label} become ${fmt(w.width)} ${L}.`;
+      }
     }
     info.textContent = text;
   }
-  form.oninput = update;
-  set(w.x0 + w.width / 2, w.z0 + w.height / 2, w.width, w.height, cell);
+  form.oninput = e => { if (e.target !== unitSel && e.target !== conv) update(); };
+  renderUnit();
+  asNow();
   ok.onclick = async () => {
     const nw = readMapForm(form);
     if (!nw || ok.disabled) return;
     dlg.close();
-    if (mode === 'new') await createMap(nw, f('title').value.trim() || 'New map', f('layers').value);
-    else resizeMap(nw);
+    if (mode === 'new') await createMap(nw, f('title').value.trim() || 'New map', f('layers').value, unitSel.value);
+    else {
+      if (unitSel.value !== from) changeUnit(unitSel.value, factor());
+      if (!sameWorld(nw, S.project.world)) resizeMap(nw);
+    }
   };
   dlg.showModal();
 }
 
+/** Scales the lengths in the settings of a layer (heights, contours, marker sizes, where a picture lies). */
+function scaleMeta(m, f) {
+  if (m.encoding) m.encoding = { offset: +(m.encoding.offset * f).toPrecision(10), step: +(m.encoding.step * f).toPrecision(10) };
+  if (m.contour) m.contour = +(m.contour * f).toPrecision(6);
+  if (m.size) m.size = +(m.size * f).toPrecision(6);
+  if (m.rect) { const r = ME.normRect(m.rect); m.rect = { x0: r.x0 * f, z0: r.z0 * f, width: r.width * f, height: r.height * f }; }
+  return m;
+}
+
+/** The map gets another unit. f: its numbers (bounds, positions, sizes, heights) are multiplied by it; 1: only the
+ *  name of the unit changes. The layers are written again; not undoable. */
+function changeUnit(unitId, f = 1) {
+  commitFloat();
+  closeNoteEditor(true);
+  const was = mapUnit();
+  S.project.unit = unitId;
+  if (f === 1) { // the layers keep S.proj: the unit changes in it
+    Object.assign(S.proj, projOf(S.project.world, unitId), { world: S.project.world });
+    syncBrushUnit(false);
+  } else {
+    const sc = v => +(v * f).toPrecision(10), ow = S.project.world;
+    const nw = { ...ow, x0: sc(ow.x0), z0: sc(ow.z0), width: sc(ow.width), height: sc(ow.height) };
+    const proj = projOf(nw, unitId), activeId = S.active?.id;
+    const item = it => {
+      const o = structuredClone(it);
+      for (const k of ['x', 'z', 'w', 'd', 'ox', 'oz']) if (typeof o[k] === 'number') o[k] = +(o[k] * f).toFixed(3);
+      for (const k of ['a', 'b']) if (Array.isArray(o[k])) o[k] = o[k].map(v => +(v * f).toFixed(3));
+      return o;
+    };
+    S.layers = S.layers.map(l => {
+      scaleMeta(l.meta, f);
+      const nl = makeLayer(l.meta, proj);
+      if (l.type === 'height') nl.apply(l.data.map(v => v * f));
+      else if (l.hasItems) nl.apply(l.items.map(item));
+      else nl.apply(l.snapshot());
+      nl.base = nl.snapshot();
+      nl.version = l.version;
+      nl.savedVersion = l.savedVersion;
+      if (l.type === 'height' || l.hasItems) nl.dirty = true;
+      return nl;
+    });
+    S.project.world = nw;
+    S.proj = proj;
+    S.active = layerById(activeId) || null;
+    S.sel = { layer: null, ids: new Set() };
+    S.area = S.float = S.draft = S.measure = S.clip = null;
+    history.undo = [];
+    history.redo = [];
+    view.world = nw;
+    view.scale /= f; // the same view: x0 and every point are multiplied too
+    syncBrushUnit(true);
+  }
+  markMeta();
+  view3d.reset();
+  saveUi();
+  renderAll();
+  const u = mapUnit();
+  toast(f === 1 ? `The map is in ${u.name.toLowerCase()} now (the numbers stay; it was ${was.name.toLowerCase()})`
+    : `The map is in ${u.name.toLowerCase()} now: ${fmt(S.project.world.width)} × ${fmt(S.project.world.height)} ${u.label}; the layers are written again`, 4000);
+}
+
 /** Change the bounds and the cells of the open map. Rasters are cut or extended (new cells are empty: 0, none,
- *  0 m) and resampled to the new cells; objects and notes keep their positions in meters; pictures stay where they
+ *  height 0) and resampled to the new cells; objects and notes keep their positions; pictures stay where they
  *  are. The layer files are written again. Not undoable. */
 function resizeMap(nw) {
   commitFloat();
@@ -3038,7 +3178,7 @@ function resizeMap(nw) {
     const j = Math.floor((nw.z0 + (k + 0.5) * nc - ow.z0) / oc);
     rows[k] = j >= 0 && j < ow.rows ? j : -1;
   }
-  const proj = { world: nw, cols: nw.cols, rows: nw.rows }, activeId = S.active?.id;
+  const proj = projOf(nw, S.project.unit), activeId = S.active?.id;
   const layers = S.layers.map(l => {
     if (l.type === 'image' && !l.meta.rect) l.meta.rect = { x0: ow.x0, z0: ow.z0, width: ow.width, height: ow.height };
     const nl = makeLayer(l.meta, proj);
@@ -3072,15 +3212,15 @@ function resizeMap(nw) {
   markMeta();
   view3d.reset();
   renderAll();
-  toast(`The map is now ${fmt(nw.width)} × ${fmt(nw.height)} m (${nw.cols} × ${nw.rows} cells); the layers are written again`, 4000);
+  toast(`The map is now ${fmt(nw.width)} × ${fmt(nw.height)} ${ul()} (${nw.cols} × ${nw.rows} cells); the layers are written again`, 4000);
 }
 
-/** The layers of a new map. */
-function basicLayers() {
+/** The layers of a new map in a unit (marker sizes scaled; the height layer takes its defaults from the unit). */
+function basicLayers(unitId = 'm') {
   const L = (id, name, group, type, extra = {}) => ({ id, name, group, type, visible: true, opacity: 1, locked: false, ...extra });
-  const none = { name: 'none', color: null };
+  const none = { name: 'none', color: null }, u = ME.unitOf(unitId), size = m => +(m * u.k).toPrecision(6);
   return [
-    L('height', 'Terrain height', 'Terrain', 'height', { contour: 1, encoding: { offset: -20, step: 0.001 }, note: 'Meters.' }),
+    L('height', 'Terrain height', 'Terrain', 'height', { note: `Heights in ${u.name.toLowerCase()}.` }),
     L('ground', 'Ground texture', 'Terrain', 'category', { opacity: 0.85, classes: [none, { name: 'grass', color: '#6f9a45' }, { name: 'dirt', color: '#8a6a45' },
       { name: 'rock', color: '#6b6863' }, { name: 'sand', color: '#c8b27a' }, { name: 'mud', color: '#5a4a36' }] }),
     L('zones', 'Zones', 'Terrain', 'category', { opacity: 0.35, classes: [none, { name: 'village', color: '#e0a050' }, { name: 'woods', color: '#4f9a4a' },
@@ -3092,16 +3232,16 @@ function basicLayers() {
     L('bushes', 'Bushes', 'Greenery', 'mask', { color: '#5fa63c', opacity: 0.75 }),
     L('trees', 'Trees', 'Greenery', 'mask', { color: '#2c6a2a', opacity: 0.75 }),
     L('buildings', 'Buildings', 'Structures', 'objects', { color: '#e07a4a', style: 'footprint', label: '{kind}' }),
-    L('enemies', 'Enemies (mob packs)', 'Gameplay', 'objects', { color: '#ff4a4a', style: 'marker', marker: 'circle', size: 2.4, label: '{kind} ×{pack_size}', note: 'kind = the enemy type, pack_size = how many are in the pack.' }),
-    L('chests', 'Chests', 'Gameplay', 'objects', { color: '#ffc83c', style: 'marker', marker: 'square', size: 2, label: '{kind}' }),
-    L('hiding_spots', 'Hiding spots', 'Gameplay', 'objects', { color: '#5ee07a', style: 'marker', marker: 'diamond', size: 2.2, label: '{kind}' }),
+    L('enemies', 'Enemies (mob packs)', 'Gameplay', 'objects', { color: '#ff4a4a', style: 'marker', marker: 'circle', size: size(2.4), label: '{kind} ×{pack_size}', note: 'kind = the enemy type, pack_size = how many are in the pack.' }),
+    L('chests', 'Chests', 'Gameplay', 'objects', { color: '#ffc83c', style: 'marker', marker: 'square', size: size(2), label: '{kind}' }),
+    L('hiding_spots', 'Hiding spots', 'Gameplay', 'objects', { color: '#5ee07a', style: 'marker', marker: 'diamond', size: size(2.2), label: '{kind}' }),
     L('notes', 'Notes', 'Notes', 'notes', { color: '#ffd25a', note: 'Notes pinned to the map (Note tool, N).' }),
   ];
 }
 
 /** A new map in a folder the user picks (an empty one: the picker can make it): metadata.json and empty layer files.
- *  layersMode: 'same' (the layers of the open map, empty), 'basic' or 'notes'. */
-async function createMap(nw, title, layersMode) {
+ *  layersMode: 'same' (the layers of the open map, empty), 'basic' or 'notes'. unitId: the unit of its numbers. */
+async function createMap(nw, title, layersMode, unitId = 'm') {
   let f;
   try {
     f = new ME.Folder(await window.showDirectoryPicker({ id: 'gwp', mode: 'readwrite' }));
@@ -3111,15 +3251,17 @@ async function createMap(nw, title, layersMode) {
   }
   if (await f.exists('metadata.json')) { toast(`${f.name}/ already has a map (metadata.json): choose an empty folder — the folder dialog can make a new one`, 6000); return; }
   if (folder && S.project && anyDirty()) await save(); // the open map keeps its changes
-  const proj = { world: nw, cols: nw.cols, rows: nw.rows };
+  const proj = projOf(nw, unitId);
   let metas;
   if (layersMode === 'same' && S.project) {
+    const f = ME.unitFactor(S.project.unit, unitId) || ME.unitOf(unitId).k / mapUnit().k;
     metas = S.layers.filter(l => l.type !== 'image').map(l => {
-      const m = structuredClone(l.meta);
+      const m = scaleMeta(structuredClone(l.meta), f);
       delete m.file;
+      if (l.type === 'height') delete m.encoding; // the defaults of the unit
       return m;
     });
-  } else metas = layersMode === 'notes' ? basicLayers().filter(m => m.type === 'notes') : basicLayers();
+  } else metas = layersMode === 'notes' ? basicLayers(unitId).filter(m => m.type === 'notes') : basicLayers(unitId);
   const layers = metas.map(m => makeLayer(m, proj));
   toast('Writing the new map…', 60000);
   for (const l of layers) {
@@ -3127,12 +3269,12 @@ async function createMap(nw, title, layersMode) {
     const data = await l.fileData();
     if (data) await f.write(l.file, data);
   }
-  await f.write('metadata.json', metadataText({ title, created: `Started in GameWorld Painter on ${today()}`, world: nw }, layers));
+  await f.write('metadata.json', metadataText({ title, created: `Started in GameWorld Painter on ${today()}`, unit: unitId, world: nw }, layers));
   await connectFolder(f);
   view.fit();
   saveUi();
   requestRender();
-  toast(`New map “${title}” in ${f.name}/: ${layers.length} layers, ${fmt(nw.width)} × ${fmt(nw.height)} m`, 4000);
+  toast(`New map “${title}” in ${f.name}/: ${layers.length} layers, ${fmt(nw.width)} × ${fmt(nw.height)} ${ME.unitOf(unitId).label}`, 4000);
 }
 
 // ------------------------------------------------------------------------------------------------ status
@@ -3160,7 +3302,7 @@ function inStatus(l) {
 /** The width kept for the value of a layer, so the bar does not jump while the cursor moves. */
 function valueWidth(l) {
   if (l.type === 'mask') return 4;
-  if (l.type === 'height') return 8;
+  if (l.type === 'height') return 9;
   return Math.min(18, Math.max(4, ...l.meta.classes.map(c => c.name.length)));
 }
 
@@ -3172,7 +3314,8 @@ function renderStatus() {
     `<b${opts.w ? ` style="min-width:${opts.w}ch"` : ''}${opts.num ? ' class="num"' : ''}>${esc(value)}</b></span>`);
   if (S.cursor) {
     const [x, z] = S.cursor, i = cellAt(x, z);
-    parts.push(`<span class="xy">x <b class="num">${x.toFixed(1)}</b> z <b class="num">${z.toFixed(1)}</b></span>`);
+    const dg = ME.unitDigits(mapUnit(), 1);
+    parts.push(`<span class="xy">x <b class="num">${x.toFixed(dg)}</b> z <b class="num">${z.toFixed(dg)}</b></span>`);
     if (i >= 0) {
       const A = S.active, list = [...S.layers].reverse().filter(l => l.raster && inStatus(l));
       if (S.statusCfg.selected && A?.raster && !list.includes(A)) list.unshift(A);
@@ -3191,8 +3334,11 @@ function renderStatus() {
   if (S.area) item('area', m2(S.area.count));
   if (S.float) item('floating', S.float.label);
   st.innerHTML = parts.join('');
-  $('#zoom-label').textContent = `${view.scale.toFixed(1)} px/m`;
+  $('#zoom-label').textContent = zoomText(view.scale);
 }
+
+/** The zoom as text: px per unit, or units per px when zoomed far out (a map in centimeters). */
+function zoomText(s) { return s >= 1 ? `${s.toFixed(1)} px/${ul()}` : `${+(1 / s).toPrecision(3)} ${ul()}/px`; }
 
 function closeMenu() { $('#ctx-menu')?.remove(); }
 
@@ -3263,7 +3409,7 @@ function renderSaveState() {
 
 function renderSizeLabel() {
   const w = S.project && S.project.world;
-  $('#size-label').textContent = w ? `${fmt(w.width)} × ${fmt(w.height)} m` : '—';
+  $('#size-label').textContent = w ? `${fmt(w.width)} × ${fmt(w.height)} ${ul()}` : '—';
 }
 
 /** Zoom presets under the zoom button. */
@@ -3274,8 +3420,10 @@ function openZoomMenu() {
   const go = s => { closeMenu(); if (s) view.zoomAt(s / view.scale, view.w / 2, view.h / 2); else view.fit(); saveUi(); requestRender(); };
   m.append(el('button', { class: 'menu-item', onclick: () => go(0) }, el('span', { class: 'tick' }), el('span', { class: 'label' }, 'Fit the map'), el('span', { class: 'note' }, 'F')));
   m.append(el('div', { class: 'menu-sep' }));
-  for (const s of [0.5, 1, 2, 4, 8, 16, 32, 64]) {
-    m.append(el('button', { class: 'menu-item', onclick: () => go(s) }, el('span', { class: 'tick' }, Math.abs(view.scale - s) < 0.05 ? '✓' : ''), el('span', { class: 'label' }, `${s} px/m`), el('span', { class: 'note' }, `${(100 / s).toFixed(s >= 4 ? 1 : 0)} m per 100 px`)));
+  const [lo, hi] = view.limits(), steps = [];
+  for (let s = 2 ** Math.ceil(Math.log2(lo)); s <= hi * 1.001; s *= 2) steps.push(s);
+  for (const s of steps.slice(-9)) {
+    m.append(el('button', { class: 'menu-item', onclick: () => go(s) }, el('span', { class: 'tick' }, Math.abs(view.scale / s - 1) < 0.02 ? '✓' : ''), el('span', { class: 'label' }, zoomText(s)), el('span', { class: 'note' }, `${fmt(+(100 / s).toPrecision(3))} ${ul()} per 100 px`)));
   }
   document.body.append(m);
   m.style.left = Math.min(innerWidth - m.offsetWidth - 4, b.left) + 'px';
@@ -3335,6 +3483,7 @@ $('#new').onclick = () => openMapDialog('new');
 $('#size').onclick = () => openMapDialog('size');
 
 const view3d = new ME.View3D($('#view3d'), {
+  unitK: () => (S.project ? mapUnit().k : 1),
   world: () => (S.project ? S.project.world : null),
   heightLayer: () => (S.active?.type === 'height' ? S.active
     : S.layers.find(l => l.type === 'height' && l.meta.visible) || S.layers.find(l => l.type === 'height') || null),
@@ -3377,7 +3526,7 @@ noteEd.querySelector('textarea').addEventListener('keydown', e => {
 });
 
 window.gwp = { // for the console and tests
-  S, save, undo, redo, setTool, setActive, layerById, poll, store, history, commitFloat, setArea, view3d, resizeMap, createMap, dock,
+  S, save, undo, redo, setTool, setActive, layerById, poll, store, history, commitFloat, setArea, view3d, resizeMap, createMap, changeUnit, openMapDialog, dock,
   connect: handle => connectFolder(new ME.Folder(handle)),
   get view() { return view; }, get folder() { return folder; }, get busy() { return busy; },
 };

@@ -251,7 +251,7 @@ class CategoryLayer extends RasterLayer {
   }
 }
 
-// height colors (meters): hollows, lowland greens, hills, cliffs, peaks
+// height colors (meters; heights in other units are divided by their k first): hollows, lowland greens, hills, cliffs, peaks
 const HEIGHT_STOPS = [
   [-14, [46, 52, 40]], [-4, [74, 92, 60]], [0, [104, 140, 84]], [2, [128, 158, 92]],
   [6, [172, 168, 104]], [12, [168, 136, 92]], [20, [140, 118, 102]], [30, [196, 188, 180]], [45, [246, 246, 246]],
@@ -273,9 +273,10 @@ class HeightLayer extends RasterLayer {
   constructor(meta, project) {
     super(meta, project);
     this.data = new Float32Array(this.cols * this.rows);
-    // 16-bit PNG value v -> offset + v * step meters: -20 .. 45.5 m in millimeters
-    if (!meta.encoding) meta.encoding = { offset: -20, step: 0.001 };
-    if (meta.contour == null) meta.contour = 1;
+    // 16-bit PNG value v -> offset + v * step: in meters -20 .. 45.5 m in millimeters (scaled for other units)
+    const k = project.k || 1;
+    if (!meta.encoding) meta.encoding = { offset: -20 * k, step: ME.nice(0.001 * k) };
+    if (meta.contour == null) meta.contour = ME.nice(k);
   }
 
   meters(v) { const e = this.meta.encoding; return Math.fround(e.offset + v * e.step); }
@@ -305,7 +306,7 @@ class HeightLayer extends RasterLayer {
 
   paint(x0, y0, x1, y1) {
     const N = this.cols, R = this.rows, d = this.img.data, h = this.data, c = +this.meta.contour || 0;
-    const k = 1 / (2 * this.project.world.width / N);
+    const k = 1 / (2 * this.project.world.width / N), perM = 1 / (this.project.k || 1);
     const L = [-0.48, 0.75, -0.45], ll = Math.hypot(...L);
     for (let y = y0; y < y1; y++) {
       for (let x = x0, i = y * N + x0; x < x1; x++, i++) {
@@ -325,22 +326,23 @@ class HeightLayer extends RasterLayer {
             shade *= major ? 0.5 : 0.72;
           }
         }
-        const col = heightColor(v), o = i * 4;
+        const col = heightColor(v * perM), o = i * 4;
         d[o] = col[0] * shade; d[o + 1] = col[1] * shade; d[o + 2] = col[2] * shade; d[o + 3] = 255;
       }
     }
   }
 
-  describe(i) { return this.data[i].toFixed(2) + ' m'; }
+  describe(i) { const u = ME.unitOf(this.project.unit); return this.data[i].toFixed(ME.unitDigits(u, 2)) + ' ' + u.label; }
 
   /** Widen the encoding when the heights do not fit in it (a coarser step for a bigger range). */
   fitEncoding() {
     let lo = Infinity, hi = -Infinity;
     for (const v of this.data) { if (v < lo) lo = v; if (v > hi) hi = v; }
-    const e = this.meta.encoding;
+    const e = this.meta.encoding, k = this.project.k || 1, ten = 10 * k;
     if (lo >= e.offset && hi <= e.offset + 65535 * e.step) return;
-    const offset = Math.min(e.offset, Math.floor(lo / 10) * 10 - 10);
-    const step = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05].find(st => offset + 65535 * st >= hi + 5) || 0.05;
+    const offset = Math.min(e.offset, Math.floor(lo / ten) * ten - ten);
+    let step = ME.stepAtLeast(0.001 * k); // 1 mm in meters, then 2, 5, 10 mm... until the heights fit
+    while (offset + 65535 * step < hi + 5 * k) step = ME.stepAtLeast(step * 1.001);
     this.meta.encoding = { offset, step };
     if (ME.onMetaChange) ME.onMetaChange(this);
   }
@@ -358,10 +360,11 @@ class HeightLayer extends RasterLayer {
 
 // ------------------------------------------------------------------------------------------------ objects
 
-/** World corners of an item's footprint (Godot yaw: local +X turns toward -Z for positive yaw). */
-function footprintCorners(it) {
+/** World corners of an item's footprint (Godot yaw: local +X turns toward -Z for positive yaw). k: units per meter,
+ *  for the size of an item without one (1 m). */
+function footprintCorners(it, k = 1) {
   const a = (it.yaw || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-  const w = Math.max(it.w || 1, 0.1) / 2, d = Math.max(it.d || 1, 0.1) / 2, ox = it.ox || 0, oz = it.oz || 0;
+  const w = Math.max(it.w || k, 0.1 * k) / 2, d = Math.max(it.d || k, 0.1 * k) / 2, ox = it.ox || 0, oz = it.oz || 0;
   return [[-w, -d], [w, -d], [w, d], [-w, d]].map(([lx, lz]) => {
     lx += ox; lz += oz;
     return [it.x + lx * c + lz * s, it.z - lx * s + lz * c];
@@ -393,7 +396,7 @@ class ObjectLayer extends Layer {
     if (meta.type === 'objects') {
       if (!meta.style) meta.style = 'marker';
       if (!meta.marker) meta.marker = 'circle';
-      if (!meta.size) meta.size = 2;
+      if (!meta.size) meta.size = 2 * (project.k || 1);
     }
   }
 
@@ -458,7 +461,7 @@ class ObjectLayer extends Layer {
     for (const it of this.items) {
       const sel = selected && selected.has(it.id);
       if (m.style === 'footprint') {
-        const pts = footprintCorners(it).map(([x, z]) => view.toScreen(x, z));
+        const pts = footprintCorners(it, this.project.k).map(([x, z]) => view.toScreen(x, z));
         ctx.beginPath();
         pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
         ctx.closePath();
@@ -503,14 +506,15 @@ class ObjectLayer extends Layer {
     }
   }
 
-  /** The topmost item under the world point, or null. tol: meters. */
+  /** The topmost item under the world point, or null. tol: in the unit of the map. */
   hit(x, z, view) {
     const tol = 4 / view.scale;
     for (let k = this.items.length - 1; k >= 0; k--) {
       const it = this.items[k];
       if (this.meta.style === 'footprint') {
         const [lx, lz] = localOf(it, x, z);
-        if (Math.abs(lx) <= Math.max(it.w || 1, 0.1) / 2 + tol && Math.abs(lz) <= Math.max(it.d || 1, 0.1) / 2 + tol) return it;
+        const k = this.project.k || 1;
+        if (Math.abs(lx) <= Math.max(it.w || k, 0.1 * k) / 2 + tol && Math.abs(lz) <= Math.max(it.d || k, 0.1 * k) / 2 + tol) return it;
       } else if (this.meta.style === 'link' && it.a && it.b) {
         const r = this.markerRadius(view) * 0.7 / view.scale + tol;
         if (Math.hypot(x - it.a[0], z - it.a[1]) <= r || Math.hypot(x - it.b[0], z - it.b[1]) <= r) return it;

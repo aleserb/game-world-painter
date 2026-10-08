@@ -1,4 +1,4 @@
-// The map view: world meters <-> screen pixels (x to the right, z down: north is up).
+// The map view: world units (meters, or the unit of the map) <-> screen pixels (x to the right, z down: north is up).
 // The screen pixels of the view are "UI pixels": UI_SCALE of a CSS pixel, so texts, markers and handles drawn on the
 // map have the size of the rest of the interface (style.css uses the same factor), as the page at 75 % zoom.
 (function (ME) {
@@ -10,7 +10,7 @@
     constructor(canvas, world) {
       this.canvas = canvas;
       this.world = world;
-      this.scale = 4; // screen px per meter
+      this.scale = 4; // screen px per unit of the map
       this.ox = 0; // screen position of the map corner (x0, z0)
       this.oy = 0;
       this.dpr = 1;
@@ -50,15 +50,27 @@
       ctx.setTransform(c, 0, 0, c, this.dpr * this.ox, this.dpr * this.oy);
     }
 
+    /** The scale that shows the whole map. */
+    fitScale() {
+      const m = 16;
+      return Math.max(1e-6, Math.min((this.w - 2 * m) / this.world.width, (this.h - 2 * m) / this.world.height));
+    }
+
+    /** The zoom range, whatever the unit: from a quarter of the whole map to 48 px per cell. */
+    limits() {
+      const fit = this.fitScale(), hi = Math.max(48 / (this.world.width / this.world.cols), fit * 4);
+      return [Math.min(fit / 4, hi), hi];
+    }
+
     fit() {
-      const m = 16, W = this.world.width, H = this.world.height;
-      this.scale = Math.max(0.2, Math.min((this.w - 2 * m) / W, (this.h - 2 * m) / H));
+      const W = this.world.width, H = this.world.height;
+      this.scale = this.fitScale();
       this.ox = (this.w - W * this.scale) / 2;
       this.oy = (this.h - H * this.scale) / 2;
     }
 
     zoomAt(factor, sx, sy) {
-      const s = Math.max(0.5, Math.min(120, this.scale * factor));
+      const [lo, hi] = this.limits(), s = Math.max(lo, Math.min(hi, this.scale * factor));
       const [x, z] = this.toWorld(sx, sy);
       this.scale = s;
       this.ox = sx - (x - this.world.x0) * s;

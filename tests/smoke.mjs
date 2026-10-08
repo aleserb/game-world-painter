@@ -176,6 +176,30 @@ try {
   await ev(`gwp.dock.isOpen('view3d') || document.getElementById('btn3d').click(); true`);
   check(await until(`gwp.view3d.isOpen && (!!gwp.view3d.gl || !!gwp.view3d.soft)`), '3D preview', await ev(`gwp.view3d.soft ? 'software view' : 'WebGL2'`));
 
+  // units: the map in centimeters (converted through the Map size dialog), then renamed to plain units
+  const pre = await ev(`(() => { const e = gwp.layerById('enemies').items[0], h = gwp.layerById('height'), i = (h.rows >> 1) * h.cols + (h.cols >> 1);
+    return { x: e.x, z: e.z, h: h.data[i], i, brush: gwp.S.brush.size }; })()`);
+  const dlgSet = async (unit, convert) => ev(`(() => { const f = document.querySelector('#map-dlg form'), u = f.elements.namedItem('unit');
+    u.value = ${JSON.stringify(unit)}; u.dispatchEvent(new Event('change'));
+    ${convert ? `f.elements.namedItem('convert').value = ${JSON.stringify(convert)}; f.elements.namedItem('convert').dispatchEvent(new Event('change'));` : ''}
+    return document.querySelector('#map-dlg .info').textContent; })()`);
+  await ev(`gwp.openMapDialog('size'); true`);
+  const info = await dlgSet('cm', 'convert');
+  await ev(`document.querySelector('#map-dlg .ok').click(); true`);
+  const cm = await ev(`(() => { const w = gwp.S.project.world, e = gwp.layerById('enemies').items[0], h = gwp.layerById('height');
+    return { unit: gwp.S.project.unit, w: w.width, cols: w.cols, x: e.x, z: e.z, h: h.data[${pre.i}], brush: gwp.S.brush.size, label: document.getElementById('size-label').textContent, cell: h.describe(${pre.i}) }; })()`);
+  const near = (a, b) => Math.abs(a - b) <= Math.max(1e-6, Math.abs(b) * 1e-4) + 0.002;
+  check(cm.unit === 'cm' && cm.w === 32000 && cm.cols === 640 && near(cm.x, pre.x * 100) && near(cm.z, pre.z * 100) && near(cm.h, pre.h * 100)
+    && near(cm.brush, pre.brush * 100) && cm.label.endsWith('cm') && cm.cell.endsWith(' cm') && info.includes('multiplied by 100'),
+    'convert the map to centimeters', `${cm.label}, enemy x ${pre.x} -> ${cm.x}, height ${cm.cell}`);
+  check(await until(async () => (await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo');
+    return (await (await d.getFileHandle('metadata.json')).getFile()).text(); })()`)).includes('"unit":"cm"')), 'metadata.json says "unit":"cm"');
+  await ev(`gwp.openMapDialog('size'); true`);
+  await dlgSet('u');
+  await ev(`document.querySelector('#map-dlg .ok').click(); true`);
+  const u = await ev(`({ unit: gwp.S.project.unit, w: gwp.S.project.world.width, x: gwp.layerById('enemies').items[0].x, label: document.getElementById('size-label').textContent })`);
+  check(u.unit === 'u' && u.w === 32000 && near(u.x, cm.x) && u.label.endsWith(' u'), 'rename the unit: the numbers stay', u.label);
+
   check(errors.length === 0, 'no errors in the page', errors.slice(0, 3).join(' | '));
 } catch (err) {
   check(false, 'the test ran', err.message);
