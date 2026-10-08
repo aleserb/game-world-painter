@@ -1,0 +1,383 @@
+// The tools of the GameWorld Painter MCP server: names, descriptions and argument schemas. They run in the app (the
+// browser page with the map, js/agent-tools.js); the server forwards the calls. The schemas use plain JSON Schema
+// (objects, arrays, strings, numbers, enums) so every client can read them.
+
+export const API_VERSION = 1; // the app checks it: the same tools on both sides
+
+const point = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: '[x, z]' };
+
+export const REGION_DOC = `A region (where) is an object, one of:
+{"area":"map"|"selection"|"view"} — selection: the area the user selected in the app (else their selected objects);
+{"rect":[x0,z0,x1,z1]}; {"circle":[x,z,r]}; {"polygon":[[x,z],...]};
+{"zone":"village"} — a class of the zones layer (a categories layer named zones);
+{"layer":"ground","class":"rock"} (or "class":["rock","sand"]) — cells of categories classes;
+{"layer":"trees","min":50,"max":100} — cells where a mask is in a range (percent);
+{"height":{"min":0,"max":12}} and {"slope":{"max":25}} (degrees) — from the height layer;
+{"near":"roads","distance":8} — within a distance of a layer (a mask ≥ 50 %, objects, paths), of a point [x,z] or of another region;
+{"items":{"layer":"buildings","ids":[3,4]}} — the shapes of items (footprints and closed paths with their inside);
+{"all":[...]} (intersection), {"any":[...]} (union), {"not":{...}}.
+Lengths are in the unit of the map (get_map_info).`;
+
+const REGION_SHORT = 'A region object, e.g. {"area":"selection"}, {"zone":"village"}, {"layer":"trees","min":50}, {"near":"roads","distance":5}, {"rect":[x0,z0,x1,z1]}, {"all":[...]}; the full syntax is in describe_region';
+const region = (what = 'Where') => ({ type: 'object', description: `${what}. ${REGION_SHORT}.`, additionalProperties: true });
+const layerArg = desc => ({ type: 'string', description: desc });
+const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const edit = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+
+export const TOOLS = [
+  {
+    name: 'get_map_info',
+    title: 'Map overview',
+    description: 'Start here. The open map: title, unit, bounds, cell size, every layer with what it holds (mask coverage, categories classes and their shares, height range, object kinds and property keys, notes, vector paths), the zones, conventions, and what the user is looking at. Coordinates: x grows east, z grows south, north is up.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: ro,
+  },
+  {
+    name: 'get_user_context',
+    title: 'What the user selected',
+    description: 'What the user is pointing at now: the selected area (its bounds and size), the selected items, the selected layers, the active layer and tool, the view and the cursor. Use it for requests like "this area", "here", "the selected ones".',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: ro,
+  },
+  {
+    name: 'render_map',
+    title: 'Look at the map',
+    description: 'An image of the map from above (north up) with a coordinate grid: the whole map, the view, or a region. Look before and after changes. Optional highlight of a region.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        region: region('What to show (default: the user\'s view)'),
+        layers: { type: 'array', items: { type: 'string' }, description: 'Layer ids to draw (default: the visible layers)' },
+        size: { type: 'integer', minimum: 128, maximum: 1600, description: 'The long side in pixels (default 768)' },
+        grid: { type: 'boolean', description: 'Coordinate grid with labels (default true)' },
+        labels: { type: 'boolean', description: 'Labels of objects and paths (default true)' },
+        highlight: region('A region to outline in red'),
+        format: { type: 'string', enum: ['jpeg', 'png'], description: 'Default jpeg' },
+      },
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'describe_region',
+    title: 'Describe a region',
+    description: 'Everything in a region: its size and bounds, mask coverage, categories shares (zones, ground), heights and slopes, and the items of every layer by kind. Use it to check an area before and after changing it.',
+    inputSchema: { type: 'object', properties: { region: { type: 'object', description: `The region. ${REGION_DOC}`, additionalProperties: true }, list_items: { type: 'integer', minimum: 0, maximum: 200, description: 'Also list up to this many items per layer (default 20)' } }, required: ['region'], additionalProperties: false },
+    annotations: ro,
+  },
+  {
+    name: 'read_layer',
+    title: 'Read raster values',
+    description: 'The values of a mask (0–100 %), categories (class names) or height layer as a coarse grid over a region, row by row from north to south. For exact work use describe_region, find_spots or the edit tools instead of reading every cell.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('A mask, categories or height layer id'),
+        region: region('Where (default: the whole map)'),
+        resolution: { type: 'integer', minimum: 4, maximum: 128, description: 'Cells per side of the grid at most (default 40)' },
+      },
+      required: ['layer'],
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'find_items',
+    title: 'Find objects, notes, paths',
+    description: 'Items of objects, notes and vector layers with filters: region, kind, properties, distance to a point. measure adds facts per item: the distance to the nearest feature of other layers (e.g. roads, water), the height, the slope, the zone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('An item layer id (default: every objects, notes and vector layer)'),
+        region: region('Only items inside it'),
+        kind: { type: 'array', items: { type: 'string' }, description: 'Only these kinds' },
+        props: { type: 'object', description: 'Only items whose properties have these values', additionalProperties: true },
+        near: point,
+        max_distance: { type: 'number', description: 'With near: only items closer than this; sorted by distance' },
+        measure: { type: 'array', items: { type: 'string' }, description: 'Layer ids to measure the distance to, and/or "height", "slope", "zone"' },
+        limit: { type: 'integer', minimum: 1, maximum: 2000, description: 'Default 200' },
+        offset: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'analyze_items',
+    title: 'Analyze spacing and groups',
+    description: 'How items are spread in a region: nearest-neighbor distances, pairs closer than min_distance, groups (items within cluster_distance of each other) and the largest empty gaps. Use it to check or even out placements while keeping groups.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('An objects, notes or vector layer'),
+        region: region('Where (default: the whole map)'),
+        kind: { type: 'array', items: { type: 'string' } },
+        min_distance: { type: 'number', description: 'Report pairs closer than this' },
+        cluster_distance: { type: 'number', description: 'Items closer than this are one group (default: twice the median neighbor distance)' },
+        gaps: { type: 'integer', minimum: 0, maximum: 30, description: 'How many of the largest empty spots to report (default 5)' },
+      },
+      required: ['layer'],
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'find_spots',
+    title: 'Find spots by a measure',
+    description: 'Finds the best spots in a region by a measure of the terrain and the layers, as ranked areas with a center point. open: far from cover (open, exposed ground); enclosed: much cover around (poor view, hidden); high / low: above / below the surroundings (viewpoints, hollows); flat / steep: slope; empty: far from any item and cover (looks empty); far_from / near_to: distance to given layers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        metric: { type: 'string', enum: ['open', 'enclosed', 'high', 'low', 'flat', 'steep', 'empty', 'far_from', 'near_to'] },
+        region: region('Where to look (default: the whole map)'),
+        layers: { type: 'array', items: { type: 'string' }, description: 'Cover layers for open / enclosed / empty (default: masks and objects that look like cover: trees, bushes, rocks, buildings...); the layers to measure to for far_from / near_to' },
+        radius: { type: 'number', description: 'The neighborhood for enclosed, high, low (default: about 15 m)' },
+        min_area: { type: 'number', description: 'The smallest spot (area, default: 4 cells)' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 10' },
+        min_separation: { type: 'number', description: 'Spot centers at least this far apart (default: 2 × radius)' },
+      },
+      required: ['metric'],
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'analyze_walkability',
+    title: 'Where can the player walk',
+    description: 'Walkable ground in a region (slope below max_slope, outside blocking layers such as water, cliffs, buildings) split into connected parts: the main part (from start, else the largest), isolated pockets where a player could get stuck or never get to, narrow passages, and items standing on blocked or isolated ground.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        region: region('Where (default: the whole map)'),
+        max_slope: { type: 'number', description: 'Degrees (default 35)' },
+        blocking: { type: 'array', items: { type: 'string' }, description: 'Blocking layers (default: water, cliffs, walls and footprint objects such as buildings)' },
+        start: point,
+        check: { type: 'array', items: { type: 'string' }, description: 'Item layers whose items must be reachable (default: every objects layer)' },
+        narrow_width: { type: 'number', description: 'Report passages narrower than this (default 2 m)' },
+      },
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'find_route',
+    title: 'Find a route',
+    description: 'The best walking route between two places on the terrain: not steeper than max_slope, around blocking layers, preferring some layers (roads) and keeping away from others (enemies, danger zones). Returns the route as points; add_to adds it as a path to a vector layer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'object', description: 'Where from: {"point":[x,z]}, {"item":{"layer":"buildings","id":3}} or a region (its middle)', additionalProperties: true },
+        to: { type: 'object', description: 'Where to (as from)', additionalProperties: true },
+        max_slope: { type: 'number', description: 'Degrees (default 35)' },
+        blocking: { type: 'array', items: { type: 'string' }, description: 'Layers that cannot be crossed (default: water, cliffs, walls, buildings)' },
+        prefer: { type: 'array', items: { type: 'string' }, description: 'Layers that are cheaper to walk on (roads, trails)' },
+        avoid: { type: 'array', description: 'Keep away: [{"layer":"enemies","distance":25}] or [{"region":{...}}]', items: { type: 'object', additionalProperties: true } },
+        add_to: { type: 'object', description: 'Add the route to a vector layer: {"layer":"road_lines","kind":"safe path","width":3}', additionalProperties: true },
+      },
+      required: ['from', 'to'],
+      additionalProperties: false,
+    },
+    annotations: { ...ro, readOnlyHint: false },
+  },
+  {
+    name: 'add_items',
+    title: 'Add objects, notes, paths',
+    description: 'Adds items to an objects, notes or vector layer. Objects: {kind, x, z, yaw?, w?, d?, props?} (zone is filled from the zones layer). Notes: {x, z, text, color?}. Paths: {kind, points: [[x,z] or [x,z,width]...], closed?, width?, smooth?, props?}. One undo step for the user.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('The layer id'),
+        items: { type: 'array', items: { type: 'object', additionalProperties: true }, minItems: 1, maxItems: 5000 },
+      },
+      required: ['layer', 'items'],
+      additionalProperties: false,
+    },
+    annotations: edit,
+  },
+  {
+    name: 'update_items',
+    title: 'Change items',
+    description: 'Changes items by id: set fields ({"id":3,"kind":"ruin"}), merge properties ({"id":3,"props":{"level":5}}, null removes one), move by an offset ({"id":3,"move":[dx,dz]}) or turn ({"id":3,"turn":90}, degrees counter-clockwise). One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('The layer id'),
+        items: { type: 'array', items: { type: 'object', additionalProperties: true }, minItems: 1, maxItems: 5000 },
+      },
+      required: ['layer', 'items'],
+      additionalProperties: false,
+    },
+    annotations: { ...edit, idempotentHint: true },
+  },
+  {
+    name: 'delete_items',
+    title: 'Delete items',
+    description: 'Deletes items of a layer by ids, or all items matching region and kind. The app may ask the user to confirm. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('The layer id'),
+        ids: { type: 'array', items: { type: 'integer' } },
+        region: region('Delete the items inside it'),
+        kind: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['layer'],
+      additionalProperties: false,
+    },
+    annotations: { ...edit, destructiveHint: true },
+  },
+  {
+    name: 'scatter_items',
+    title: 'Scatter objects naturally',
+    description: 'Places many objects naturally (blue-noise spacing) in a region: weighted kinds, a minimum spacing, an optional count, a density layer, distances to keep from other layers, groups (packs of 3–5 around a center), random rotation and properties. Existing items of the layer keep the spacing too. dry_run returns the positions without adding. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('An objects (or notes) layer'),
+        region: region('Where to place'),
+        kind: { type: 'string', description: 'One kind for all' },
+        kinds: { type: 'array', description: 'Or a mix: [{"kind":"oak","weight":3,"props":{...},"w":4,"d":4}]', items: { type: 'object', additionalProperties: true } },
+        spacing: { type: 'number', description: 'The least distance between items (default: about 4 m)' },
+        count: { type: 'integer', minimum: 1, maximum: 5000, description: 'How many at most (default: fill the region at that spacing, up to 2000)' },
+        density: { type: 'object', description: 'Weight by a mask: {"layer":"forest","invert":false}: more where it is higher', additionalProperties: true },
+        keep_away: { type: 'array', description: 'Distances to keep: [{"layer":"roads","distance":3},{"layer":"buildings","distance":5}]', items: { type: 'object', additionalProperties: true } },
+        groups: { type: 'object', description: 'Groups instead of single items: {"size":[3,5],"radius":6}; spacing then applies between the groups', additionalProperties: true },
+        yaw: { description: '"random" (default) or degrees', anyOf: [{ type: 'number' }, { type: 'string' }] },
+        props: { type: 'object', description: 'Properties for every item', additionalProperties: true },
+        random_props: { type: 'object', description: 'Random integer properties per item or group: {"pack_size":[3,5]}', additionalProperties: true },
+        seed: { type: 'integer', description: 'For a repeatable result' },
+        dry_run: { type: 'boolean' },
+      },
+      required: ['layer', 'region'],
+      additionalProperties: false,
+    },
+    annotations: edit,
+  },
+  {
+    name: 'paint_layer',
+    title: 'Paint a mask or categories',
+    description: 'Paints a mask (value in percent) or a categories layer (value: a class name) over a region, with a soft edge (feather) and natural variation (noise). Modes: set, max (only raise), min (only lower), add, subtract, erase. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('A mask or categories layer'),
+        region: region('Where to paint'),
+        value: { description: 'Mask: 0–100 (percent). Categories: the class name ("none" erases)', anyOf: [{ type: 'number' }, { type: 'string' }] },
+        mode: { type: 'string', enum: ['set', 'max', 'min', 'add', 'subtract', 'erase'], description: 'Default set' },
+        feather: { type: 'number', description: 'Soft edge width (default 0)' },
+        noise: { type: 'object', description: 'Natural variation: {"amount":20,"scale":12,"seed":1} — amount in percent of the value, scale: the size of the blotches', additionalProperties: true },
+        strength: { type: 'number', minimum: 0, maximum: 100, description: 'Percent (default 100)' },
+      },
+      required: ['layer', 'region', 'value'],
+      additionalProperties: false,
+    },
+    annotations: edit,
+  },
+  {
+    name: 'edit_terrain',
+    title: 'Shape the terrain',
+    description: 'Changes the height layer in a region with a soft edge. raise / lower by amount; flatten to height (default: the mean height there); smooth with radius; slope: an even ramp from one place to another (the heights there, or given ones); noise: natural bumps of amount with scale. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['raise', 'lower', 'flatten', 'smooth', 'slope', 'noise'] },
+        region: region('Where (slope: default the area between from and to)'),
+        layer: layerArg('The height layer (default: the first one)'),
+        amount: { type: 'number', description: 'raise / lower / noise: how much (in the unit of the map)' },
+        height: { type: 'number', description: 'flatten: the target height' },
+        radius: { type: 'number', description: 'smooth: how far (default 3 m)' },
+        scale: { type: 'number', description: 'noise: the size of the bumps (default 20 m)' },
+        from: { type: 'object', description: 'slope: {"point":[x,z]} or a region, optional "height"', additionalProperties: true },
+        to: { type: 'object', description: 'slope: as from', additionalProperties: true },
+        feather: { type: 'number', description: 'Soft edge width (default: a tenth of the region size)' },
+        strength: { type: 'number', minimum: 0, maximum: 100, description: 'Percent (default 100)' },
+        seed: { type: 'integer' },
+      },
+      required: ['op'],
+      additionalProperties: false,
+    },
+    annotations: edit,
+  },
+  {
+    name: 'create_layer',
+    title: 'Create a layer',
+    description: 'Creates a layer: mask, category (classes), height, objects (style marker or footprint), notes or vector (paths). It goes on top of its group. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        type: { type: 'string', enum: ['mask', 'category', 'height', 'objects', 'notes', 'vector'] },
+        group: { type: 'string', description: 'Default "AI"' },
+        note: { type: 'string', description: 'What the layer is for' },
+        color: { type: 'string', description: '#rrggbb' },
+        classes: { type: 'array', description: 'category: [{"name":"ruins","color":"#8a7a6a"}] ("none" is added first)', items: { type: 'object', additionalProperties: true } },
+        style: { type: 'string', enum: ['marker', 'footprint', 'link'], description: 'objects' },
+        marker: { type: 'string', enum: ['circle', 'square', 'diamond', 'triangle', 'cross'] },
+        size: { type: 'number', description: 'objects: marker size' },
+        label: { type: 'string', description: 'Label template, e.g. "{kind}"' },
+        width: { type: 'number', description: 'vector: path width' },
+        dash: { type: 'boolean', description: 'vector: dashed (borders)' },
+      },
+      required: ['name', 'type'],
+      additionalProperties: false,
+    },
+    annotations: edit,
+  },
+  {
+    name: 'update_layer',
+    title: 'Change a layer',
+    description: 'Changes the settings of a layer: name, note, group, color, visible, opacity, label, width, add or rename categories classes. The agent cannot unlock layers. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: layerArg('The layer id'),
+        name: { type: 'string' }, note: { type: 'string' }, group: { type: 'string' }, color: { type: 'string' },
+        visible: { type: 'boolean' }, opacity: { type: 'number', minimum: 0, maximum: 1 }, label: { type: 'string' }, width: { type: 'number' },
+        add_classes: { type: 'array', items: { type: 'object', additionalProperties: true }, description: '[{"name":"ruins","color":"#8a7a6a"}]' },
+        rename_classes: { type: 'object', description: '{"old name":"new name"}', additionalProperties: true },
+      },
+      required: ['layer'],
+      additionalProperties: false,
+    },
+    annotations: edit,
+  },
+  {
+    name: 'show_on_map',
+    title: 'Show the user',
+    description: 'Moves the user\'s view to a region, items or a point and outlines it for a few seconds, with an optional message. select: also make it the selected area. Use it to point at what you changed or found.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        region: region('What to show'),
+        items: { type: 'object', description: '{"layer":"enemies","ids":[1,2]}', additionalProperties: true },
+        point: point,
+        message: { type: 'string', description: 'A short message shown to the user' },
+        select: { type: 'boolean', description: 'Make the region the selected area' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'undo',
+    title: 'Undo agent changes',
+    description: 'Undoes the latest changes made by the agent (only while they are the latest changes in the app).',
+    inputSchema: { type: 'object', properties: { steps: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 1' } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+];
+
+/** Tools that change the map: they fail while the user allows reading only. */
+export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
+
+/** Tool calls that may wait for the user (a confirmation in the app): a longer timeout. */
+export const SLOW_TOOLS = new Set(['delete_items']);
+
+export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world seen from above, open in the user's browser. You read it and change it through these tools; every change appears at once in the app, and the user can undo it (Ctrl+Z).
+
+- Start with get_map_info (layers, unit, zones) and get_user_context ("this area" means the user's selected area: {"area":"selection"}).
+- Look with render_map; measure with describe_region, find_items, find_spots, analyze_items, analyze_walkability, find_route.
+- Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch: each call is one undo step.
+- ${REGION_DOC.replace(/\n/g, '\n  ')}
+- x grows east, z grows south (north is up); lengths are in the unit of the map. Keep what the user made unless asked; respect locked layers.
+- After changing, check the result (describe_region or render_map), then show_on_map what you did and leave notes (add_items on a notes layer) to explain choices when useful.`;

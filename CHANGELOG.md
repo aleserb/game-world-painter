@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- AI agents through MCP: a local server (`mcp/`, no dependencies, MCP 2024-11-05 … 2026-07-28 over stdio and
+  Streamable HTTP) that Claude Code, Codex, GitHub Copilot, VS Code, Cursor, Gemini CLI and other agents start; the app
+  connects to it (AI Agent switch and LED in the header, a dialog with the setup per agent, the skill, the activity
+  and the settings). 20 tools run in the page: overview, user context, images, region facts, raster reads, items with
+  measures, spacing and groups, spots (open, enclosed, high, flat, empty…), walkability, routes; scatter, add, update,
+  delete items, paint masks and categories, shape the terrain, create and change layers, show on the map, undo.
+  Regions: zones, classes, mask ranges, heights, slopes, distances to layers, shapes, all / any / not. Every change
+  is one undo step; read-only mode and confirmation of deletions.
+- The agent skill (`skills/game-world-painter`): the workflow, regions and recipes for common requests.
 - Vector layers: roads, rivers, borders as smooth or straight lines through points (a width per point, closed
   paths as areas, dashed borders). Path tool (D) draws them, Select edits their points; Paint into a layer turns
   them into mask, categories or height pixels. The demo has a river, a trail and a border.

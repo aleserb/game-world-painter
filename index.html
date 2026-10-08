@@ -21,6 +21,10 @@
   <label class="switch-label" title="Write every change into the folder by itself, a moment after it is made"><input type="checkbox" id="autosave" class="switch"> Autosave</label>
   <span id="save-state" class="muted"></span>
   <span class="spacer"></span>
+  <span id="agent-ctl">
+    <button id="agent-btn" type="button" class="hbtn" title="AI Agent"><span class="led off"></span>AI Agent</button>
+    <input type="checkbox" id="agent-on" class="switch" title="Let AI agents connect (MCP)">
+  </span>
   <label class="switch-label" title="Grid (Shift+G)"><span data-icon="grid-3x3"></span> Grid <input type="checkbox" id="grid" class="switch"></label>
   <label class="switch-label" title="3D preview of the terrain (P)"><span data-icon="box"></span> 3D <input type="checkbox" id="btn3d" class="switch"></label>
   <button id="size" class="hbtn" title="The bounds and the cell size of the map">Map size: <b id="size-label">—</b></button>
@@ -163,6 +167,8 @@
   </form>
 </dialog>
 
+<dialog id="agent-dlg"><form method="dialog" class="agent"></form></dialog>
+
 <dialog id="help-dlg">
   <form method="dialog">
     <h3>GameWorld Painter</h3>
@@ -201,7 +207,8 @@
         <tr><th>Ctrl+Z · Ctrl+Shift+Z</th><td>Undo · redo</td></tr>
         <tr><th>Ctrl+S · Ctrl+O</th><td>Save now · open another project folder</td></tr>
         <tr><th>Panels</th><td>Drag a tab to dock the panel at another side or into another group · Shift+drag a tab to float it · drag the borders to resize · right-click a tab: maximize, float, reset the layout</td></tr>
-        <tr><th>Bottom bar</th><td>Right-click: which layers it shows (the selected one, visible categories and the height by default)</td></tr>
+        <tr><th>AI Agent (header)</th><td>Let AI agents (Claude Code, Codex, GitHub Copilot…) work on the map through a local MCP server: the switch turns it on, a click on the LED shows how to connect them</td></tr>
+      <tr><th>Bottom bar</th><td>Right-click: which layers it shows (the selected one, visible categories and the height by default)</td></tr>
       </table>
     </div>
     <p class="muted small">GameWorld Painter · MIT license · source, docs and the project format: <a href="https://github.com/aleserb/game-world-painter" target="_blank" rel="noopener">github.com/aleserb/game-world-painter</a></p>
@@ -223,5 +230,12 @@
 <script src="js/dock.js"></script>
 <script src="js/view.js"></script>
 <script src="js/app.js"></script>
+<script src="js/agent-tools.js"></script>
+<script src="js/agent-read.js"></script>
+<script src="js/agent-analysis.js"></script>
+<script src="js/agent-write.js"></script>
+<script src="js/agent-paint.js"></script>
+<script src="js/agent.js"></script>
+<script src="js/agent-ui.js"></script>
 </body>
 </html>

@@ -1,0 +1,43 @@
+{
+  "name": "game-world-painter-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for GameWorld Painter: AI agents (Claude Code, Codex, GitHub Copilot, VS Code, Cursor, Gemini CLI) read and edit the game world map open in the app.",
+  "type": "module",
+  "bin": {
+    "game-world-painter-mcp": "server.mjs"
+  },
+  "main": "server.mjs",
+  "files": [
+    "server.mjs",
+    "lib/",
+    "skill/",
+    "docs/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "prepack": "rm -rf skill docs && cp -R ../skills/game-world-painter skill && mkdir docs && cp ../docs/project-format.md docs/",
+    "postpack": "rm -rf skill docs"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "game-development",
+    "level-editor",
+    "map-editor",
+    "ai-agent"
+  ],
+  "homepage": "https://aleserb.github.io/game-world-painter/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleserb/game-world-painter.git",
+    "directory": "mcp"
+  },
+  "bugs": "https://github.com/aleserb/game-world-painter/issues",
+  "license": "MIT",
+  "author": "Aleksandr Serbin"
+}

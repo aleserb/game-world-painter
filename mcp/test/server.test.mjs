@@ -1,0 +1,166 @@
+// The MCP server without the app: protocol (legacy and modern), the bridge to a fake app, origins, relays, HTTP.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { startStdio, initialize, freePort, fakeApp, req, sleep } from './helpers.mjs';
+import { TOOLS } from '../lib/tools.mjs';
+
+const META = v => ({ 'io.modelcontextprotocol/protocolVersion': v, 'io.modelcontextprotocol/clientInfo': { name: 'modern-client', version: '2.0' }, 'io.modelcontextprotocol/clientCapabilities': {} });
+
+test('legacy handshake, tools, resources, errors', async () => {
+  const port = await freePort();
+  const c = startStdio(port);
+  try {
+    const init = await initialize(c, '2025-06-18');
+    assert.equal(init.result.protocolVersion, '2025-06-18');
+    assert.equal(init.result.serverInfo.name, 'game-world-painter');
+    assert.match(init.result.instructions, /get_map_info/);
+    assert.ok(init.result.capabilities.tools);
+    const old = await startStdioInit(port, '2024-11-05');
+    assert.equal(old, '2024-11-05');
+    const future = await startStdioInit(port, '2099-01-01');
+    assert.equal(future, '2025-11-25', 'an unknown legacy version gets the newest legacy one');
+
+    const list = await c.request('tools/list', {});
+    assert.equal(list.result.tools.length, TOOLS.length);
+    for (const t of list.result.tools) {
+      assert.match(t.name, /^[a-z_]+$/);
+      assert.equal(t.inputSchema.type, 'object');
+      assert.ok(t.description.length > 20, t.name);
+    }
+    assert.equal((await c.request('ping', {})).result && true, true);
+    const res = await c.request('resources/list', {});
+    assert.ok(res.result.resources.some(r => r.uri === 'gwp://project-format'));
+    const doc = await c.request('resources/read', { uri: 'gwp://project-format' });
+    assert.match(doc.result.contents[0].text, /metadata\.json/);
+    assert.equal((await c.request('no/such', {})).error.code, -32601);
+    assert.equal((await c.request('tools/call', { name: 'nope', arguments: {} })).error.code, -32602);
+    c.raw('{not json');
+    const notConnected = await c.request('tools/call', { name: 'get_map_info', arguments: {} });
+    assert.equal(notConnected.result.isError, true);
+    assert.match(notConnected.result.content[0].text, /not connected/);
+  } finally { await c.kill(); }
+});
+
+async function startStdioInit(port, version) {
+  const c = startStdio(port);
+  try { return (await initialize(c, version)).result.protocolVersion; } finally { await c.kill(); }
+}
+
+test('modern requests: server/discover, per-request _meta, unsupported versions', async () => {
+  const port = await freePort();
+  const c = startStdio(port);
+  try {
+    const d = await c.request('server/discover', { _meta: META('2026-07-28') });
+    assert.equal(d.result.resultType, 'complete');
+    assert.ok(d.result.supportedVersions.includes('2026-07-28') && d.result.supportedVersions.includes('2025-06-18'));
+    assert.equal(d.result._meta['io.modelcontextprotocol/serverInfo'].name, 'game-world-painter');
+    const list = await c.request('tools/list', { _meta: META('2026-07-28') });
+    assert.equal(list.result.resultType, 'complete');
+    assert.equal(list.result.tools.length, TOOLS.length);
+    const bad = await c.request('tools/list', { _meta: META('1900-01-01') });
+    assert.equal(bad.error.code, -32022);
+    assert.deepEqual(bad.error.data.requested, '1900-01-01');
+  } finally { await c.kill(); }
+});
+
+test('tool calls run in the app; images and errors come back', async () => {
+  const port = await freePort();
+  const c = startStdio(port);
+  try {
+    await initialize(c);
+    await sleep(200);
+    const app = fakeApp(port, (tool, args) => {
+      if (tool === 'render_map') return { text: 'a map', images: [{ data: 'iVBORw0KGgo=', mimeType: 'image/png' }] };
+      if (tool === 'paint_layer') throw new Error('The layer "trees" is locked');
+      return { data: { tool, args } };
+    });
+    const hello = await app.ready;
+    assert.equal(hello.name, 'game-world-painter-mcp');
+    const r = await c.request('tools/call', { name: 'find_items', arguments: { layer: 'enemies', limit: 3 } });
+    assert.equal(r.result.isError, false);
+    assert.deepEqual(JSON.parse(r.result.content[0].text), { tool: 'find_items', args: { layer: 'enemies', limit: 3 } });
+    const img = await c.request('tools/call', { name: 'render_map', arguments: {} });
+    assert.deepEqual(img.result.content.map(x => x.type), ['text', 'image']);
+    const err = await c.request('tools/call', { name: 'paint_layer', arguments: { layer: 'trees', region: {}, value: 50 } });
+    assert.equal(err.result.isError, true);
+    assert.match(err.result.content[0].text, /locked/);
+    const st = (await req(port, 'GET', '/status')).json;
+    assert.equal(st.app.connected, true);
+    assert.equal(st.app.title, 'Test');
+    assert.ok(st.agents.some(a => a.name === 'test-agent'));
+    app.close();
+  } finally { await c.kill(); }
+});
+
+test('only allowed origins and loopback hosts', async () => {
+  const port = await freePort();
+  const c = startStdio(port);
+  try {
+    await sleep(300);
+    assert.equal((await req(port, 'GET', '/status', { headers: { Origin: 'https://evil.example' } })).status, 403);
+    assert.equal((await req(port, 'GET', '/status', { headers: { Host: 'evil.example' } })).status, 403);
+    const ok = await req(port, 'GET', '/status', { headers: { Origin: 'https://aleserb.github.io' } });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers['access-control-allow-origin'], 'https://aleserb.github.io');
+    const pre = await req(port, 'OPTIONS', '/app/result', { headers: { Origin: 'http://localhost:5173', 'Access-Control-Request-Private-Network': 'true' } });
+    assert.equal(pre.status, 204);
+    assert.equal(pre.headers['access-control-allow-private-network'], 'true');
+    assert.equal((await req(port, 'GET', '/status', { headers: { Origin: 'null' } })).status, 403);
+    assert.equal((await req(port, 'POST', '/relay/call', { body: { tool: 'get_map_info' }, headers: { Origin: 'http://localhost:8000', 'X-GWP-Relay': '1' } })).status, 403, 'no relay from browsers');
+  } finally { await c.kill(); }
+});
+
+test('a second agent relays through the first; it takes over when the first exits', async () => {
+  const port = await freePort();
+  const a = startStdio(port), b = startStdio(port);
+  try {
+    await initialize(a, '2025-06-18', 'agent-a');
+    await initialize(b, '2025-06-18', 'agent-b');
+    await sleep(400);
+    const app = fakeApp(port, tool => ({ data: { ran: tool } }));
+    await app.ready;
+    const r = await b.request('tools/call', { name: 'get_user_context', arguments: {} });
+    assert.equal(JSON.parse(r.result.content[0].text).ran, 'get_user_context');
+    const st = (await req(port, 'GET', '/status')).json;
+    assert.deepEqual(st.agents.map(x => x.name).sort(), ['agent-a', 'agent-b']);
+    app.close();
+    await a.kill(); // the hub goes away: b takes the port (at its next hello or call); the app reconnects there
+    const first = await b.request('tools/call', { name: 'get_map_info', arguments: {} });
+    assert.match(first.result.content[0].text, /not connected/, 'b runs the hub now, without an app yet');
+    const app2 = fakeApp(port, tool => ({ data: { ran: tool, again: true } }));
+    await app2.ready;
+    const r2 = await b.request('tools/call', { name: 'get_map_info', arguments: {} });
+    assert.equal(JSON.parse(r2.result.content[0].text).again, true);
+    app2.close();
+  } finally { await b.kill(); await a.kill().catch(() => {}); }
+});
+
+test('Streamable HTTP: legacy sessions and modern stateless requests', async () => {
+  const port = await freePort();
+  const c = startStdio(port);
+  try {
+    await sleep(300);
+    const accept = { Accept: 'application/json, text/event-stream' };
+    const init = await req(port, 'POST', '/mcp', { headers: accept, body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'http-client', version: '1' } } } });
+    assert.equal(init.status, 200);
+    const sid = init.headers['mcp-session-id'];
+    assert.ok(sid);
+    assert.equal((await req(port, 'POST', '/mcp', { headers: { ...accept, 'Mcp-Session-Id': sid }, body: { jsonrpc: '2.0', method: 'notifications/initialized' } })).status, 202);
+    const list = await req(port, 'POST', '/mcp', { headers: { ...accept, 'Mcp-Session-Id': sid }, body: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
+    assert.equal(list.json.result.tools.length, TOOLS.length);
+    assert.equal((await req(port, 'GET', '/mcp')).status, 405);
+    const modern = { ...accept, 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/list' };
+    const m = await req(port, 'POST', '/mcp', { headers: modern, body: { jsonrpc: '2.0', id: 3, method: 'tools/list', params: { _meta: META('2026-07-28') } } });
+    assert.equal(m.status, 200);
+    assert.equal(m.json.result.resultType, 'complete');
+    const mismatch = await req(port, 'POST', '/mcp', { headers: { ...modern, 'Mcp-Method': 'tools/call' }, body: { jsonrpc: '2.0', id: 4, method: 'tools/list', params: { _meta: META('2026-07-28') } } });
+    assert.equal(mismatch.status, 400);
+    assert.equal(mismatch.json.error.code, -32020);
+    const unknown = await req(port, 'POST', '/mcp', { headers: { ...modern, 'Mcp-Method': 'nope/nope' }, body: { jsonrpc: '2.0', id: 5, method: 'nope/nope', params: { _meta: META('2026-07-28') } } });
+    assert.equal(unknown.status, 404);
+    const old = await req(port, 'POST', '/mcp', { headers: { ...accept, 'MCP-Protocol-Version': '2027-01-01' }, body: { jsonrpc: '2.0', id: 6, method: 'tools/list', params: { _meta: META('2027-01-01') } } });
+    assert.equal(old.status, 400);
+    assert.equal(old.json.error.code, -32022);
+    assert.equal((await req(port, 'POST', '/mcp', { headers: { ...accept, Origin: 'https://evil.example' }, body: { jsonrpc: '2.0', id: 7, method: 'tools/list' } })).status, 403);
+  } finally { await c.kill(); }
+});

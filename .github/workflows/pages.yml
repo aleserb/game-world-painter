@@ -23,9 +23,13 @@ jobs:
         with:
           node-version: 24
       - name: Syntax
-        run: for f in js/*.js vendor/*.js tests/*.mjs; do node --check "$f"; done
+        run: for f in js/*.js vendor/*.js tests/*.mjs mcp/*.mjs mcp/lib/*.mjs mcp/test/*.mjs; do node --check "$f"; done
+      - name: MCP server
+        run: node --test mcp/test/*.test.mjs
       - name: Smoke test in headless Chrome
         run: node tests/smoke.mjs
+      - name: AI agent through the MCP server, in headless Chrome
+        run: node tests/agent.mjs
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -43,7 +47,7 @@ jobs:
       - name: The site
         run: |
           mkdir _site
-          cp -r index.html style.css js vendor docs examples LICENSE _site/
+          cp -r index.html style.css js vendor docs examples skills LICENSE _site/
           touch _site/.nojekyll
           # a new version of every script and the styles with every commit: browsers keep files for 10 minutes
           v="${GITHUB_SHA::8}"

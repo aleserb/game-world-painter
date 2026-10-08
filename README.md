@@ -36,6 +36,9 @@ properties on the right](docs/screenshot.jpg)
   set of layers.
 - **Files as the source of truth**: autosave into the project folder, which the app also watches — changes made by
   scripts or AI agents appear within a second and merge with your unsaved work.
+- **AI agents** (Claude Code, Codex, GitHub Copilot, VS Code, Cursor, Gemini CLI…) work on the open map through a
+  local **MCP server**: they look at it, measure it (open areas, walkability, routes, spacing) and change it in
+  batches (scatter objects, paint, shape the terrain), each change one undo step. See [AI agents](#ai-agents).
 - Undo and redo, dockable panels, keyboard shortcuts.
 
 ## Getting started
@@ -89,6 +92,24 @@ the map is open:
 
 To add a layer, add its entry to `metadata.json` and write its file.
 
+## AI agents
+
+For more than editing files, connect an agent to the app through the **MCP server** in [`mcp/`](mcp/) (Node.js 18+,
+no dependencies). The agent then gets tools to understand the map (an overview, images with a grid, facts about any
+region, items with distances, open or hidden spots, walkability, routes, spacing and groups) and to change it
+(scatter objects naturally, paint masks and categories with soft edges and noise, raise, flatten, smooth and slope
+the terrain, add, change and delete items, create layers), with regions such as *the selected area*, *the village
+zone*, *8 m around the roads*, and their intersections.
+
+1. Add the server to your agent once, e.g. `claude mcp add --scope user game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs`
+   (`node mcp/server.mjs setup` prints the command for each agent; details in [mcp/README.md](mcp/README.md)).
+2. In the app, turn on **AI Agent** in the header: the LED turns green when an agent is connected, and its dialog
+   shows the setup for each agent, the activity and the settings (read only, confirm deletions).
+3. Ask, e.g. *“Place chests along the trails, at least 20 m apart”* or *“Find where the player can get stuck and fix it”*.
+
+The agent skill in [`skills/game-world-painter`](skills/game-world-painter) teaches agents the workflow (install with
+`gh skill install aleserb/game-world-painter game-world-painter`, or download it from the AI Agent dialog).
+
 ## Development
 
 There is no build step and no dependency to install: the app is `index.html`, `style.css` and the classic scripts
@@ -108,9 +129,12 @@ python3 -m http.server 8000      # then http://localhost:8000
 | `js/view.js`, `js/view3d.js` | The 2D map view, the 3D preview |
 | `js/dock.js` | The dockable panels |
 | `js/png.js`, `js/folder.js`, `js/store.js` | PNG encoding and decoding, the project folder, browser storage |
+| `js/agent*.js` | The AI agent: the connection to the MCP server, its tools (regions, analysis, edits), the dialog |
+| `mcp/` | The MCP server ([mcp/README.md](mcp/README.md)); `node --test mcp/test/*.test.mjs` |
+| `skills/game-world-painter/` | The agent skill |
 | `vendor/` | Third-party libraries as plain scripts (see [vendor/README.md](vendor/README.md)) |
 | `examples/` | The demo island and the script that builds it (`python3 examples/make_demo.py`) |
-| `tests/smoke.mjs` | An end-to-end check in headless Chrome: `node tests/smoke.mjs` (Node 22+) |
+| `tests/smoke.mjs`, `tests/agent.mjs` | End-to-end checks in headless Chrome: `node tests/smoke.mjs`, `node tests/agent.mjs` (the agent through the MCP server) (Node 22+) |
 
 Pushes to `main` run the test and publish the app with GitHub Pages
 ([.github/workflows/pages.yml](.github/workflows/pages.yml)). See [CONTRIBUTING.md](CONTRIBUTING.md).

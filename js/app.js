@@ -352,6 +352,7 @@ async function openProject(project) {
   toast(`${S.layers.length} layers loaded from ${folder.name}/`, 2000);
   if (!S.active) setActive([...S.layers].reverse().find(l => l.raster) || S.layers[S.layers.length - 1], false);
   renderAll();
+  ME.onProjectOpen?.();
 }
 
 /** Use a folder: read its metadata.json, then watch it. */
@@ -739,6 +740,7 @@ function render() {
   drawSelectionHandles();
   drawArea();
   drawOverlay();
+  if (ME.drawAgentOverlay) ME.drawAgentOverlay(ctx, view); // what the AI agent shows (js/agent.js)
   drawScaleBar();
   positionNoteEditor();
   view3d.cursorTick();
@@ -3930,6 +3932,15 @@ noteEd.querySelector('textarea').addEventListener('keydown', e => {
   if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeNoteEditor(false); }
   else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); closeNoteEditor(true); }
 });
+
+// What the AI agent (js/agent-tools.js, js/agent.js) works with: the state and the edits with undo.
+ME.app = {
+  S, history, get view() { return view; }, get folder() { return folder; },
+  world, mpp, toCell, layerById, canEdit, editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
+  renderAll, renderLayers, renderProps, renderOptions, requestRender, renderSaveState, markMeta, viewChanged,
+  insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, mapUnit, fmt, fmtLen,
+  itemCenter, selectedItems, saveUi, eventPos,
+};
 
 window.gwp = { // for the console and tests
   S, save, undo, redo, setTool, setActive, layerById, poll, store, history, commitFloat, setArea, view3d, resizeMap, createMap, changeUnit, openMapDialog, dock,
