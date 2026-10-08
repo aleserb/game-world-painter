@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Vector layers: roads, rivers, borders as smooth or straight lines through points (a width per point, closed
+  paths as areas, dashed borders). Path tool (D) draws them, Select edits their points; Paint into a layer turns
+  them into mask, categories or height pixels. The demo has a river, a trail and a border.
 - Units: a map can be in meters, centimeters, feet, inches, pixels or plain units (`unit` in `metadata.json`); the
   Map size dialog converts a map to another unit or only renames it.
 - Select tool first in the tool bar, on every layer; in-app confirmation dialogs; a two-column Help.

@@ -70,6 +70,7 @@ const ev = async expr => {
   return r.result?.result?.value;
 };
 /** Polls a page expression (or an async function) until it is truthy or the time is up; returns its last value. */
+const near2 = (a, b) => Math.abs(a - b) < 0.6;
 const until = async (expr, ms = 15000) => {
   let v;
   for (const end = Date.now() + ms; Date.now() < end; await sleep(200)) {
@@ -99,9 +100,9 @@ try {
   const files = ['metadata.json', ...fs.readdirSync(path.join(DEMO, 'layers')).map(f => 'layers/' + f)];
   for (const f of files) await opfsWrite('demo/' + f, fs.readFileSync(path.join(DEMO, f)));
   await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo'); await gwp.connect(d); })()`);
-  await until(`gwp.S.layers.length === 11`, 5000);
+  await until(`gwp.S.layers.length === 14`, 5000);
   const layers = await ev(`gwp.S.layers.length`);
-  check(layers === 11, 'the demo opens', `${layers} layers, ${await ev(`document.title`)}`);
+  check(layers === 14, 'the demo opens', `${layers} layers, ${await ev(`document.title`)}`);
 
   // a brush stroke on Trees; autosave writes trees.png
   const sum = lid => ev(`gwp.layerById('${lid}').data.reduce((a, v) => a + v, 0)`);
@@ -148,6 +149,34 @@ try {
   check((await ev(`gwp.layerById('enemies').items.length`)) === n0 + 1, 'add an object');
   check(await ev(`gwp.layerById('notes').items.length === 3 && gwp.layerById('notes').type === 'notes'`), 'notes');
 
+  // vector paths: draw one with the Path tool, edit its points with Select, paint a river into the water mask
+  const click = async (x, z, modifiers = 0) => {
+    const [px, py] = await screen(x, z);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: px, y: py, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers });
+  };
+  await ev(`gwp.setActive(gwp.layerById('trails')); gwp.setTool('path'); true`);
+  const tools = await ev(`[...document.querySelectorAll('#tools .tbtn')].map(t => t.textContent.trim()).join(',')`);
+  const trailStamp = await opfsStamp('demo/layers/trails.json');
+  await click(-60, 50); await click(-40, 60); await click(-20, 52);
+  for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  const drawn = await ev(`(L => { const it = L.items.at(-1); return { n: L.items.length, pts: it.points.length, x0: it.points[0][0], sel: gwp.S.sel.ids.has(it.id) }; })(gwp.layerById('trails'))`);
+  await ev(`gwp.setTool('select'); true`);
+  await drag([[-60, 50], [-62, 44]]); // its first point
+  await drag([[-30, 55], [-31, 58]]); // the middle of the first segment: a new point
+  const edited = await ev(`(it => [it.points.length, it.points[0][0], it.points[0][1]])(gwp.layerById('trails').items.at(-1))`);
+  await click(-62, 44, 1); // Alt+click: delete that point
+  const after3 = await ev(`gwp.layerById('trails').items.at(-1).points.length`);
+  const saved = await until(async () => (await opfsStamp('demo/layers/trails.json')) !== trailStamp);
+  const water0 = await sum('water');
+  await ev(`(L => { gwp.setActive(L); gwp.S.sel = { layer: null, ids: new Set() }; })(gwp.layerById('rivers')); gwp.S.paintTarget = 'water'; gwp.S.brush.value = 100; gwp.S.brush.strength = 100; true`);
+  await ev(`gwp.setTool('select'); true`);
+  await click(-90, 20);
+  await ev(`(b => b && b.click())([...document.querySelectorAll('#props button')].find(b => b.textContent === 'Paint the path into Water')); true`);
+  const water1 = await sum('water');
+  check(tools.includes('Path') && drawn.pts === 3 && drawn.sel && near2(edited[1], -62) && edited[0] === 4 && after3 === 3 && saved && water1 > water0,
+    'vector paths: draw, edit points, autosave, paint into a mask', `${JSON.stringify(drawn)} edited ${edited} -> ${after3} points, water ${water0} -> ${water1}`);
+  await ev(`gwp.setActive(gwp.layerById('enemies')); gwp.setTool('add'); true`);
+
   // the tool bar follows the layer
   check(await ev(`(b => b.some(t => t.includes('Add Object')) && !b.some(t => t.includes('Brush')))([...document.querySelectorAll('#tools .tbtn')].map(t => t.textContent))`),
     'the tool bar shows the tools of the layer');
@@ -189,7 +218,7 @@ try {
   const gone3 = await until(`!gwp.layerById('trees') && !gwp.layerById('roads') && !gwp.layerById('water') && !!gwp.layerById('bushes')`, 3000);
   await ev(`gwp.undo(); true`);
   const back3 = await ev(`!!(gwp.layerById('trees') && gwp.layerById('roads') && gwp.layerById('water'))`);
-  check(range === 'bushes,roads,trees,water' && three === 'roads,trees,water' && hidden && shown && title === 'Delete 3 layers?' && gone3 && back3,
+  check(range === 'borders,bushes,rivers,roads,trails,trees,water' && three === 'borders,rivers,roads,trails,trees,water' && hidden && shown && title === 'Delete 6 layers?' && gone3 && back3,
     'select several layers: Shift / Ctrl+click, Space hides and shows them, delete and undo', `${range} | ${three} | hidden ${hidden}, shown ${shown}, ${title}, deleted ${gone3}, back ${back3}`);
 
   // Shift+click with no click before (the range starts at the active layer); Ctrl+click on a Mac (a contextmenu event)
@@ -220,7 +249,7 @@ try {
   const groups0 = await groups();
   await ev(`[...document.querySelectorAll('#layer-list .group-row')].find(r => r.textContent.startsWith('Greenery')).click(); document.getElementById('layer-up').click(); true`);
   const groups1 = await groups();
-  check(stay && trees[0] && trees[1] === 'Greenery' && groups0 === 'Notes,Gameplay,Structures,Greenery,Terrain' && groups1 === 'Notes,Gameplay,Greenery,Structures,Terrain',
+  check(stay && trees[0] && trees[1] === 'Greenery' && groups0 === 'Notes,Gameplay,Structures,Greenery,Lines,Terrain' && groups1 === 'Notes,Gameplay,Greenery,Structures,Lines,Terrain',
     'move layers inside their group, move a group', `${groups0} -> ${groups1}`);
 
   // a wider map

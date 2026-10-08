@@ -66,6 +66,75 @@
     return { cov, x0, y0, x1, y1 };
   };
 
+  /** A ribbon along points [x, y, width] as one Path2D: a quad per segment and a disc per point, all wound the same
+   *  way, so a nonzero fill is their union (round joins and ends; the width may change along it). closed: the last
+   *  point joins the first. minWidth: the thinnest ribbon drawn. */
+  ME.ribbonPath = function (pts, closed = false, minWidth = 0) {
+    const path = new Path2D(), n = pts.length, r = p => Math.max(p[2] || 0, minWidth) / 2;
+    const quad = q => {
+      let area = 0;
+      for (let k = 0; k < 4; k++) { const a = q[k], b = q[(k + 1) % 4]; area += a[0] * b[1] - b[0] * a[1]; }
+      if (area < 0) q.reverse(); // the same way round as the discs (arc: increasing angles)
+      path.moveTo(q[0][0], q[0][1]);
+      for (let k = 1; k < 4; k++) path.lineTo(q[k][0], q[k][1]);
+      path.closePath();
+    };
+    for (let k = 0; k < (closed ? n : n - 1); k++) {
+      const a = pts[k], b = pts[(k + 1) % n], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy);
+      if (!l) continue;
+      const nx = -dy / l, ny = dx / l, ra = r(a), rb = r(b);
+      quad([[a[0] + nx * ra, a[1] + ny * ra], [b[0] + nx * rb, b[1] + ny * rb], [b[0] - nx * rb, b[1] - ny * rb], [a[0] - nx * ra, a[1] - ny * ra]]);
+    }
+    for (const p of pts) {
+      const rr = r(p);
+      if (rr > 0) { path.moveTo(p[0] + rr, p[1]); path.arc(p[0], p[1], rr, 0, Math.PI * 2); }
+    }
+    return path;
+  };
+
+  /** Cell coverage (like shapeCoverage) of a ribbon along points [x, y, width] in cells; fill: also the inside of a
+   *  closed one. Lines thinner than a cell still cover one. */
+  ME.ribbonCoverage = function (cols, rows, { pts, closed = false, fill = false, feather = 0 }) {
+    if (!pts || pts.length < 2) return null;
+    const pad = Math.max(...pts.map(p => p[2] || 1)) / 2 + feather * 1.5 + 2;
+    let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+    for (const [x, y] of pts) { minx = Math.min(minx, x); miny = Math.min(miny, y); maxx = Math.max(maxx, x); maxy = Math.max(maxy, y); }
+    const x0 = Math.max(0, Math.floor(minx - pad)), y0 = Math.max(0, Math.floor(miny - pad));
+    const x1 = Math.min(cols, Math.ceil(maxx + pad)), y1 = Math.min(rows, Math.ceil(maxy + pad));
+    if (x1 <= x0 || y1 <= y0) return null;
+    const w = x1 - x0, h = y1 - y0, ctx = scratchCtx(w, h);
+    ctx.setTransform(1, 0, 0, 1, -x0, -y0);
+    if (feather > 0) ctx.filter = `blur(${feather / 2}px)`;
+    ctx.fillStyle = '#fff';
+    if (fill && closed && pts.length > 2) {
+      ctx.beginPath();
+      pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+      ctx.fill('nonzero');
+    }
+    ctx.fill(ME.ribbonPath(pts, closed, 1), 'nonzero');
+    const px = ctx.getImageData(0, 0, w, h).data, cov = new Uint8Array(w * h);
+    for (let k = 0; k < cov.length; k++) cov[k] = px[k * 4 + 3];
+    return { cov, x0, y0, x1, y1 };
+  };
+
+  /** The union (maximum) of two coverages; either may be null. */
+  ME.mergeCoverage = function (a, b) {
+    if (!a || !b) return a || b;
+    const x0 = Math.min(a.x0, b.x0), y0 = Math.min(a.y0, b.y0), x1 = Math.max(a.x1, b.x1), y1 = Math.max(a.y1, b.y1), w = x1 - x0;
+    const cov = new Uint8Array(w * (y1 - y0));
+    for (const c of [a, b]) {
+      const cw = c.x1 - c.x0;
+      for (let y = c.y0; y < c.y1; y++) {
+        for (let x = c.x0; x < c.x1; x++) {
+          const v = c.cov[(y - c.y0) * cw + x - c.x0], k = (y - y0) * w + x - x0;
+          if (v > cov[k]) cov[k] = v;
+        }
+      }
+    }
+    return { cov, x0, y0, x1, y1 };
+  };
+
   /** Bounding box [x0, y0, x1, y1] and the count of the set cells of a 0/1 mask (row stride N), or null if empty. */
   ME.maskBounds = function (mask, N, H = N) {
     let x0 = N, y0 = H, x1 = 0, y1 = 0, count = 0;

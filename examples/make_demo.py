@@ -3,8 +3,8 @@
     python3 examples/make_demo.py      (Python 3, numpy, Pillow)
 
 An island of 256 x 256 m (cells of 0.5 m): terrain height with hills and a mountain, a lake, ground types, zones,
-water, roads, bushes, trees, a village of buildings, enemies, chests and notes. The files follow
-docs/project-format.md; the random seed is fixed, so the output is the same every time.
+water, roads, bushes, trees, a village of buildings, enemies, chests, notes, and vector paths: a river, a trail, a
+border. The files follow docs/project-format.md; the random seed is fixed, so the output is the same every time.
 """
 import json
 import os
@@ -107,6 +107,10 @@ for k, (kind, x, z, n, zone) in enumerate([
     enemies.append({'id': k + 1, 'kind': kind, 'x': x, 'z': z, 'yaw': 0, 'zone': zone, 'props': {'pack_size': n}})
 chests = [{'id': k + 1, 'kind': kind, 'x': x, 'z': z, 'yaw': 0, 'zone': zone} for k, (kind, x, z, zone) in enumerate([
     ('wooden_chest', -50, -55, 'woods'), ('iron_chest', 58, -46, 'mountains'), ('wooden_chest', -60, 18, 'woods'), ('treasure', 70, 60, 'coast')])]
+# --- vector paths (the plan: the raster layers do not follow them): a river that widens toward the sea, a trail, a border
+rivers = [{'id': 1, 'kind': 'river', 'points': [[-68, 10, 2.5], [-78, 22], [-90, 20, 5], [-104, 30, 8]], 'props': {'name': 'Lake Run'}}]
+trails = [{'id': 1, 'kind': 'trail', 'points': [[-40, -2], [-38, -28], [-22, -52], [-4, -72], [10, -82]]}]
+borders = [{'id': 1, 'kind': 'bandit land', 'closed': True, 'points': [[34, -22], [70, -20], [82, -48], [64, -78], [34, -72], [26, -46]]}]
 notes = [
     {'id': 1, 'x': 0, 'z': 25, 'text': 'Village square: the player starts here.', 'date': '2026-10-08'},
     {'id': 2, 'x': 52, 'z': -44, 'text': 'Bandit camp. A second way up the mountain?', 'date': '2026-10-08', 'color': '#ff9eb0'},
@@ -159,12 +163,15 @@ objects_json(buildings, L('buildings.json'))
 objects_json(chests, L('chests.json'))
 objects_json(enemies, L('enemies.json'))
 objects_json(notes, L('notes.json'))
+objects_json(rivers, L('rivers.json'))
+objects_json(trails, L('trails.json'))
+objects_json(borders, L('borders.json'))
 
 
 def layer(id, name, group, type, **kw):
     e = {'id': id, 'name': name, 'group': group, 'type': type, 'visible': True, 'opacity': 1, 'locked': False}
     e.update(kw)
-    e['file'] = 'layers/%s.%s' % (id, 'json' if type in ('objects', 'notes') else 'png')
+    e['file'] = 'layers/%s.%s' % (id, 'json' if type in ('objects', 'notes', 'vector') else 'png')
     return e
 
 
@@ -175,6 +182,11 @@ layers = [
           note='Areas of the world; new objects take the zone under them.'),
     layer('water', 'Water', 'Terrain', 'mask', color='#3d7fb5', opacity=0.6),
     layer('roads', 'Roads & paths', 'Terrain', 'mask', color='#c8a46a', opacity=0.8),
+    layer('rivers', 'Rivers', 'Lines', 'vector', color='#3d7fb5', width=4, smooth=True, fill=0.35, label='{name}',
+          note='Rivers: a point can have its own width (the third number).'),
+    layer('trails', 'Trails', 'Lines', 'vector', color='#efdcae', width=1.5, smooth=True, fill=0.25),
+    layer('borders', 'Borders', 'Lines', 'vector', color='#ff8a8a', width=0.6, smooth=False, dash=True, fill=0.08, label='{kind}',
+          note='Borders of areas: closed paths.'),
     layer('bushes', 'Bushes', 'Greenery', 'mask', color='#5fa63c', opacity=0.75),
     layer('trees', 'Trees', 'Greenery', 'mask', color='#2c6a2a', opacity=0.8, note='Tree crowns: density 0-100 %.'),
     layer('buildings', 'Buildings', 'Structures', 'objects', color='#e07a4a', style='footprint', label='{kind}'),

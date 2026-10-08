@@ -5,13 +5,14 @@
 //   height    meters per cell (terrain)
 //   objects   a list of placed things with position, rotation, footprint and properties
 //   notes     text notes pinned to the map
+//   vector    paths: roads, rivers, borders as lines through points (smooth or straight), with a width; closed ones are areas
 // Every layer is a file of the project folder (README.md): masks are 8-bit grayscale PNGs, categories 8-bit palette
 // PNGs (index = class), heights 16-bit grayscale PNGs (meters = offset + value * step), objects and notes JSON,
 // pictures as they are. A layer keeps "base", its content as it is on the disk, to merge changes made there by others (an AI agent).
 (function (ME) {
   'use strict';
 
-const TYPE_NAMES = { mask: 'Mask', category: 'Categories', height: 'Height', objects: 'Objects', notes: 'Notes', image: 'Picture' };
+const TYPE_NAMES = { mask: 'Mask', category: 'Categories', height: 'Height', objects: 'Objects', notes: 'Notes', vector: 'Vector', image: 'Picture' };
 
 /** The map rectangle: {x0, z0 (the north-west corner, m), width, height (m), cols, rows (cells)}; the cells are square.
  *  Old projects had a square {x0, z0, size, px}. */
@@ -650,6 +651,148 @@ function drawMarker(ctx, shape, x, y, r, color, selected, yaw) {
   }
 }
 
+// ------------------------------------------------------------------------------------------------ vector paths
+
+/** Points of a path for drawing: [x, z, width] along it. smooth: a centripetal Catmull-Rom curve through the points
+ *  (step: about how long a piece of the curve is); widths: each point's own, else the default, between points linear. */
+function pathSamples(points, { closed = false, smooth = true, width = 0, step = 1 } = {}) {
+  const P = points.map(p => [p[0], p[1], p[2] ?? width]), n = P.length;
+  if (n < 2) return P;
+  if (!smooth || n < 3) return closed ? [...P, P[0]] : P;
+  const at = k => (closed ? P[(k + n) % n] : P[Math.max(0, Math.min(n - 1, k))]);
+  const out = [];
+  const spans = closed ? n : n - 1;
+  for (let k = 0; k < spans; k++) {
+    const p0 = at(k - 1), p1 = at(k), p2 = at(k + 1), p3 = at(k + 2);
+    const d = (a, b) => Math.max(Math.sqrt(Math.hypot(b[0] - a[0], b[1] - a[1])), 1e-6); // centripetal: sqrt of the distance
+    const t1 = d(p0, p1), t2 = t1 + d(p1, p2), t3 = t2 + d(p2, p3);
+    const m = Math.min(32, Math.max(4, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / step)));
+    for (let j = 0; j < m; j++) {
+      const t = t1 + (t2 - t1) * j / m;
+      const xz = [0, 1].map(c => {
+        const A1 = ((t1 - t) * p0[c] + t * p1[c]) / t1, A2 = ((t2 - t) * p1[c] + (t - t1) * p2[c]) / (t2 - t1);
+        const A3 = ((t3 - t) * p2[c] + (t - t2) * p3[c]) / (t3 - t2);
+        const B1 = ((t2 - t) * A1 + t * A2) / t2, B2 = ((t3 - t) * A2 + (t - t1) * A3) / (t3 - t1);
+        return ((t2 - t) * B1 + (t - t1) * B2) / (t2 - t1);
+      });
+      out.push([xz[0], xz[1], p1[2] + (p2[2] - p1[2]) * j / m]);
+    }
+  }
+  out.push(closed ? [...out[0]] : P[n - 1]);
+  return out;
+}
+
+/** Point in polygon (even-odd) of [x, z] points. */
+function insidePoly(x, z, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, zi] = pts[i], [xj, zj] = pts[j];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Roads, rivers, borders: items {id, kind, points: [[x, z] or [x, z, width]...], closed?, width?, smooth?, props?}.
+ *  The layer has the defaults: color, width (of the paths without their own), smooth, dash (dashed: borders), fill
+ *  (the opacity of the inside of closed paths), label. */
+class VectorLayer extends ObjectLayer {
+  constructor(meta, project) {
+    super(meta, project);
+    const k = project.k || 1;
+    if (!meta.color) meta.color = '#4a8ad0';
+    if (meta.width == null) meta.width = 4 * k;
+    if (meta.smooth == null) meta.smooth = true;
+    if (meta.fill == null) meta.fill = 0.25;
+  }
+
+  widthOf(it) { return it.width ?? this.meta.width ?? 0; }
+
+  smoothOf(it) { return it.smooth ?? this.meta.smooth ?? true; }
+
+  /** [x, z, width] along the path. */
+  samples(it) {
+    const w = this.project.world;
+    return pathSamples(it.points || [], { closed: !!it.closed, smooth: this.smoothOf(it), width: this.widthOf(it), step: 2 * w.width / w.cols });
+  }
+
+  length(it) {
+    const s = this.samples(it);
+    let len = 0;
+    for (let k = 1; k < s.length; k++) len += Math.hypot(s[k][0] - s[k - 1][0], s[k][1] - s[k - 1][1]);
+    return len;
+  }
+
+  area(it) {
+    if (!it.closed) return 0;
+    const s = this.samples(it);
+    let a = 0;
+    for (let k = 0; k < s.length; k++) { const p = s[k], q = s[(k + 1) % s.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    return Math.abs(a) / 2;
+  }
+
+  draw(ctx, view, selected) {
+    const m = this.meta, color = m.color;
+    view.setScreenTransform(ctx);
+    ctx.lineJoin = ctx.lineCap = 'round';
+    const labels = [];
+    for (const it of this.items) {
+      if (!it.points || it.points.length < 2) continue;
+      const sel = selected && selected.has(it.id), s = this.samples(it);
+      const pts = s.map(([x, z, w]) => [...view.toScreen(x, z), w * view.scale]);
+      if (it.closed && m.fill > 0) {
+        ctx.beginPath();
+        pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = rgba(color, m.fill);
+        ctx.fill();
+      }
+      if (m.dash) { // a border: a dashed line, as wide as the path (at least 1.5 px)
+        ctx.beginPath();
+        pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.lineWidth = Math.max(this.widthOf(it) * view.scale, 1.5);
+        ctx.setLineDash([Math.max(6, ctx.lineWidth * 3), Math.max(4, ctx.lineWidth * 2)]);
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = color;
+        ctx.fill(ME.ribbonPath(pts, false, 1.5), 'nonzero');
+      }
+      if (sel) { // the middle line
+        ctx.beginPath();
+        pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,13,20,0.8)'; ctx.stroke();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+      }
+      if (m.label && view.scale >= 1.5 && !view.texture) labels.push([it, pts[Math.floor(pts.length / 2)]]);
+    }
+    ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const [it, [x, y]] of labels) {
+      const text = label(m.label, it);
+      if (!text) continue;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,13,20,0.85)'; ctx.strokeText(text, x, y);
+      ctx.fillStyle = '#f2ecf8'; ctx.fillText(text, x, y);
+    }
+  }
+
+  /** The topmost path under the world point: on its line, or inside a closed one with a fill. */
+  hit(x, z, view) {
+    const tol = 5 / view.scale;
+    for (let k = this.items.length - 1; k >= 0; k--) {
+      const it = this.items[k];
+      if (!it.points || it.points.length < 2) continue;
+      const s = this.samples(it);
+      for (let j = 1; j < s.length; j++) {
+        if (segDist(x, z, s[j - 1], s[j]) <= Math.max(s[j - 1][2], s[j][2]) / 2 + tol) return it;
+      }
+      if (it.closed && this.meta.fill > 0 && insidePoly(x, z, s)) return it;
+    }
+    return null;
+  }
+
+  describe() { return `${this.items.length} paths`; }
+}
+
 function makeLayer(meta, project) {
   switch (meta.type) {
     case 'image': return new ImageLayer(meta, project);
@@ -658,9 +801,10 @@ function makeLayer(meta, project) {
     case 'height': return new HeightLayer(meta, project);
     case 'objects': return new ObjectLayer(meta, project);
     case 'notes': return new NoteLayer(meta, project);
+    case 'vector': return new VectorLayer(meta, project);
     default: throw new Error('unknown layer type: ' + meta.type);
   }
 }
 
-Object.assign(ME, { TYPE_NAMES, normWorld, normRect, hexToRgb, rgba, footprintCorners, localOf, label, drawMarker, makeLayer });
+Object.assign(ME, { TYPE_NAMES, normWorld, normRect, hexToRgb, rgba, footprintCorners, localOf, label, drawMarker, makeLayer, pathSamples, insidePoly });
 })(window.ME = window.ME || {});

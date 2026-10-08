@@ -21,10 +21,11 @@ const TOOLS = [
   { id: 'picker', key: 'i', name: 'Pick value', icon: '⊙', types: RASTER },
   { id: 'area', key: 'l', name: 'Select area', icon: '⬚', types: RASTER, gap: true },
   { id: 'add', key: 'a', name: 'Add object', icon: '✚', types: ['objects'], gap: true },
+  { id: 'path', key: 'd', name: 'Path', icon: '〰', types: ['vector'] },
   { id: 'note', key: 'n', name: 'Note', icon: '🗒', types: null },
   { id: 'measure', key: 'm', name: 'Measure', icon: '⟷', types: null, gap: true },
 ];
-const EDIT_TOOLS = ['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'area', 'add'];
+const EDIT_TOOLS = ['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'area', 'add', 'path'];
 const MARKERS = ['circle', 'square', 'diamond', 'triangle', 'cross'];
 const STYLES = { marker: 'Marker', footprint: 'Footprint', link: 'Two ends (A–B)' };
 
@@ -56,6 +57,8 @@ const S = {
   clip: null, // copied cells or objects
   noteEdit: null, // the note being written
   noteColor: null,
+  vtx: null, // the selected point of the selected path (vector layers), or null
+  pathKind: '', // the kind of new paths
   // settings of the layer list (order, names, classes...): version counter like the layers' (layers.js)
   metaVersion: 0,
   metaSaved: 0,
@@ -804,7 +807,7 @@ function drawScaleBar() {
 }
 
 function rotateHandle(layer, it) {
-  if (layer.meta.style === 'link' || layer.type === 'notes') return null;
+  if (layer.meta.style === 'link' || layer.type === 'notes' || layer.type === 'vector') return null;
   const a = (it.yaw || 0) * Math.PI / 180;
   const reach = layer.meta.style === 'footprint' ? Math.max(it.d || 1, it.w || 1) / 2 * view.scale : layer.markerRadius(view);
   const [x, y] = view.toScreen(it.x, it.z);
@@ -816,12 +819,54 @@ function drawSelectionHandles() {
   if (!L || !L.meta.visible || S.sel.ids.size !== 1) return;
   const it = L.items.find(i => S.sel.ids.has(i.id));
   if (!it) return;
+  if (it.points) { drawPathHandles(L, it); return; }
   const h = rotateHandle(L, it);
   if (!h) return;
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(h[2], h[3]); ctx.lineTo(h[0], h[1]); ctx.stroke();
   ctx.beginPath(); ctx.arc(h[0], h[1], 6, 0, Math.PI * 2);
   ctx.fillStyle = '#f0a35e'; ctx.fill(); ctx.stroke();
+}
+
+/** The points of the selected path (squares; the selected one orange) and the middles between them (small circles:
+ *  drag one to add a point there). The control line is dashed where the path is smooth. */
+function drawPathHandles(L, it) {
+  const pts = it.points.map(p => view.toScreen(p[0], p[1]));
+  if (L.smoothOf(it)) {
+    ctx.beginPath();
+    pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    if (it.closed) ctx.closePath();
+    ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.stroke(); ctx.setLineDash([]);
+  }
+  for (const [x, y] of pathMiddles(it)) {
+    ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(20,16,26,0.75)'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+  }
+  pts.forEach(([x, y], k) => {
+    const r = k === S.vtx ? 5 : 4;
+    ctx.fillStyle = k === S.vtx ? '#f0a35e' : '#ffffff'; ctx.strokeStyle = '#1a1520'; ctx.lineWidth = 1.5;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2); ctx.strokeRect(x - r, y - r, r * 2, r * 2);
+  });
+}
+
+/** Screen points between the points of a path: [x, y, index of the segment's first point]. */
+function pathMiddles(it) {
+  const P = it.points, out = [];
+  for (let k = 0; k < (it.closed ? P.length : P.length - 1); k++) {
+    const a = P[k], b = P[(k + 1) % P.length];
+    out.push([...view.toScreen((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), k]);
+  }
+  return out;
+}
+
+/** Removes a point of a path (an open one keeps 2, a closed one 3). */
+function deletePoint(L, it, k) {
+  if (!canEdit(L)) return;
+  if (it.points.length <= (it.closed ? 3 : 2)) { toast('A path needs at least ' + (it.closed ? '3 points (closed)' : '2 points') + ': delete the whole path with the point unselected', 3000); return; }
+  editObjects(L, 'delete a point', () => { it.points.splice(k, 1); });
+  S.vtx = null;
+  renderProps();
+  requestRender();
 }
 
 function brushRadiusPx() { return S.brush.size / 2 * view.scale; }
@@ -1032,8 +1077,26 @@ function pickObject(x, z) {
   return null;
 }
 
+// --- items: objects and notes have a position x, z (links also ends a, b); paths (vector layers) have points
+const r2 = v => +(+v).toFixed(2);
+/** The middle of an item: its position, or the middle of the points of a path. */
+function itemCenter(it) {
+  if (!it.points) return [it.x, it.z];
+  const xs = it.points.map(p => p[0]), zs = it.points.map(p => p[1]);
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
+}
+/** Puts item `it` where `o` (a copy of it) was, moved by dx, dz. */
+function placeShifted(it, o, dx, dz) {
+  if (typeof o.x === 'number') { it.x = r2(o.x + dx); it.z = r2(o.z + dz); }
+  for (const e of ['a', 'b']) if (o[e]) it[e] = [r2(o[e][0] + dx), r2(o[e][1] + dz)];
+  if (o.points) it.points = o.points.map(p => [r2(p[0] + dx), r2(p[1] + dz), ...p.slice(2)]);
+}
+const shiftItem = (it, dx, dz) => placeShifted(it, structuredClone(it), dx, dz);
+
 function select(layer, ids) {
   const had = S.sel.ids.size;
+  const list = [...ids]; // the same single path stays selected: its selected point too
+  if (!(layer && S.sel.layer === layer && list.length === 1 && S.sel.ids.size === 1 && S.sel.ids.has(list[0]))) S.vtx = null;
   S.sel = { layer, ids: new Set(ids) };
   if (S.sel.ids.size && S.propsTab === 'layer') S.propsTab = 'selection';
   else if (!S.sel.ids.size && had && S.propsTab === 'selection') S.propsTab = 'layer';
@@ -1078,6 +1141,7 @@ function addObject(layer, x, z) {
 function deleteSelected() {
   const L = S.sel.layer, n = S.sel.ids.size;
   if (!L || !n) return;
+  if (S.vtx != null && n === 1 && L.type === 'vector') { deletePoint(L, selectedItems()[0], S.vtx); return; }
   editObjects(L, `delete ${n} object(s)`, () => { L.items = L.items.filter(i => !S.sel.ids.has(i.id)); });
   select(L, []);
 }
@@ -1091,8 +1155,7 @@ function duplicateSelected() {
     for (const it of selectedItems()) {
       const c = structuredClone(it);
       c.id = next++;
-      c.x += 1; c.z += 1;
-      if (c.a) { c.a[0] += 1; c.a[1] += 1; c.b[0] += 1; c.b[1] += 1; }
+      shiftItem(c, niceUnit(1), niceUnit(1));
       L.items.push(c);
       ids.push(c.id);
     }
@@ -1104,10 +1167,7 @@ function moveSelected(dx, dz, label = 'move') {
   const L = S.sel.layer;
   if (!L || !S.sel.ids.size) return;
   editObjects(L, label, () => {
-    for (const it of selectedItems()) {
-      it.x = +(it.x + dx).toFixed(2); it.z = +(it.z + dz).toFixed(2);
-      if (it.a) { it.a = [+(it.a[0] + dx).toFixed(2), +(it.a[1] + dz).toFixed(2)]; it.b = [+(it.b[0] + dx).toFixed(2), +(it.b[1] + dz).toFixed(2)]; }
-    }
+    for (const it of selectedItems()) shiftItem(it, dx, dz);
   });
 }
 
@@ -1115,7 +1175,12 @@ function rotateSelected(deg) {
   const L = S.sel.layer;
   if (!L || !S.sel.ids.size || L.type === 'notes') return;
   editObjects(L, 'rotate', () => {
-    for (const it of selectedItems()) it.yaw = +(((it.yaw || 0) + deg + 540) % 360 - 180).toFixed(1);
+    for (const it of selectedItems()) {
+      if (!it.points) { it.yaw = +(((it.yaw || 0) + deg + 540) % 360 - 180).toFixed(1); continue; }
+      // a path turns around its middle (positive: counter-clockwise seen from above, like yaw)
+      const [cx, cz] = itemCenter(it), a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+      it.points = it.points.map(([x, z, ...w]) => [r2(cx + (x - cx) * c + (z - cz) * s), r2(cz - (x - cx) * s + (z - cz) * c), ...w]);
+    }
   });
 }
 
@@ -1433,7 +1498,7 @@ function copyItems(cut) {
   const L = S.sel.layer, items = selectedItems();
   if (!L || !items.length) return;
   S.clip = { kind: 'items', type: L.type, items: cloneItems(items) };
-  const what = `${items.length} ${L.type === 'notes' ? 'note' : 'object'}${items.length > 1 ? 's' : ''}`;
+  const what = `${items.length} ${L.type === 'notes' ? 'note' : L.type === 'vector' ? 'path' : 'object'}${items.length > 1 ? 's' : ''}`;
   if (cut) { if (!canEdit(L)) return; deleteSelected(); }
   toast(`${cut ? 'Cut' : 'Copied'} ${what}`, 1500);
   renderOptions();
@@ -1441,21 +1506,20 @@ function copyItems(cut) {
 
 function pasteItems() {
   const C = S.clip, L = S.active;
-  if (!L?.hasItems || L.type !== C.type) { toast(`Select ${C.type === 'notes' ? 'a notes' : 'an objects'} layer to paste into`); return; }
+  if (!L?.hasItems || L.type !== C.type) { toast(`Select ${C.type === 'notes' ? 'a notes' : C.type === 'vector' ? 'a vector' : 'an objects'} layer to paste into`); return; }
   if (!canEdit(L)) return;
   let dx = 2, dz = 2; // next to the copied ones, or at the cursor
   if (S.screen && S.cursor) {
-    dx = S.cursor[0] - C.items.reduce((s, i) => s + i.x, 0) / C.items.length;
-    dz = S.cursor[1] - C.items.reduce((s, i) => s + i.z, 0) / C.items.length;
+    dx = S.cursor[0] - C.items.reduce((s, i) => s + itemCenter(i)[0], 0) / C.items.length;
+    dz = S.cursor[1] - C.items.reduce((s, i) => s + itemCenter(i)[1], 0) / C.items.length;
   }
-  const r2 = v => +v.toFixed(2), ids = [];
+  const ids = [];
   editObjects(L, `paste ${C.items.length}`, () => {
     let next = L.nextId();
     for (const it of C.items) {
       const c = structuredClone(it);
       c.id = next++;
-      c.x = r2(c.x + dx); c.z = r2(c.z + dz);
-      if (c.a) { c.a = [r2(c.a[0] + dx), r2(c.a[1] + dz)]; c.b = [r2(c.b[0] + dx), r2(c.b[1] + dz)]; }
+      shiftItem(c, dx, dz);
       L.items.push(c);
       ids.push(c.id);
     }
@@ -1478,7 +1542,7 @@ function draftDown(kind, type, x, z, e, sx, sy, extra = {}) {
   const d = S.draft;
   if (d && CLICK_SHAPES.includes(d.type)) {
     const [fx, fy] = view.toScreen(...d.pts[0]);
-    if (d.type === 'polygon' && d.pts.length > 3 && Math.hypot(sx - fx, sy - fy) <= 8) { finishDraft(); return; }
+    if ((d.type === 'polygon' || d.kind === 'path') && d.pts.length > 3 && Math.hypot(sx - fx, sy - fy) <= 8) { d.closed = true; finishDraft(); return; }
     const p = snapPoint(d, [x, z], e.shiftKey);
     d.pts[d.pts.length - 1] = p;
     d.pts.push([...p]);
@@ -1535,6 +1599,7 @@ function finishDraft(keepLast = false) {
   }
   requestRender();
   if (pts.length < (d.type === 'polygon' || d.type === 'free' ? 3 : 2)) return;
+  if (d.kind === 'path') { addPath(d.layer, pts, !!d.closed && pts.length >= 3); return; }
   const cells = pts.map(p => toCell(...p));
   if (d.kind === 'area') {
     const c = ME.shapeCoverage(S.cols, S.rows, { type: d.type, pts: cells, fill: true }), m = new Uint8Array(S.cols * S.rows);
@@ -1553,6 +1618,17 @@ function finishDraft(keepLast = false) {
   renderSaveState();
 }
 
+/** A new path on a vector layer, through the points drawn with the Path tool. */
+function addPath(L, pts, closed) {
+  if (!S.layers.includes(L) || !canEdit(L)) return;
+  const kind = (S.pathKind || L.kinds()[0] || L.meta.name.toLowerCase()).trim();
+  const it = { id: L.nextId(), kind, points: pts.map(p => [r2(p[0]), r2(p[1])]) };
+  if (closed) it.closed = true;
+  editObjects(L, `draw ${kind}`, () => L.items.push(it));
+  select(L, [it.id]);
+  renderLayers();
+}
+
 function previewColor(L) {
   if (!L) return '#ffffff';
   if (L.type === 'mask') return L.meta.color || '#ffffff';
@@ -1561,6 +1637,7 @@ function previewColor(L) {
 }
 
 function drawDraft() {
+  if (S.draft.kind === 'path') { drawPathDraft(); return; }
   const d = S.draft, b = S.brush, pts = d.pts.map(p => view.toScreen(...p));
   ctx.beginPath();
   if (d.type === 'rect' || d.type === 'ellipse') {
@@ -1607,6 +1684,29 @@ function drawDraft() {
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,13,20,0.9)'; ctx.strokeText(text, x + 12, y + 10);
     ctx.fillStyle = '#ffffff'; ctx.fillText(text, x + 12, y + 10);
   }
+}
+
+/** A path being drawn: as it will look (smooth, as wide as the layer's paths), with its points. */
+function drawPathDraft() {
+  const d = S.draft, L = d.layer, w = world();
+  const s = ME.pathSamples(d.pts, { smooth: L.meta.smooth, width: L.meta.width, step: 2 * w.width / w.cols });
+  const pts = s.map(([x, z, wd]) => [...view.toScreen(x, z), wd * view.scale]);
+  ctx.fillStyle = ME.rgba(L.meta.color, 0.55);
+  ctx.fill(ME.ribbonPath(pts, false, 1.5), 'nonzero');
+  ctx.beginPath();
+  pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.setLineDash([5, 4]); ctx.lineWidth = 1; ctx.strokeStyle = '#ffffff'; ctx.stroke(); ctx.setLineDash([]);
+  d.pts.slice(0, -1).forEach(([px, pz], k) => {
+    const [x, y] = view.toScreen(px, pz), r = k === 0 && d.pts.length > 3 ? 5 : 3.5;
+    ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#1a1520'; ctx.lineWidth = 1.5;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2); ctx.strokeRect(x - r, y - r, r * 2, r * 2);
+  });
+  let len = 0;
+  for (let k = 1; k < s.length; k++) len += Math.hypot(s[k][0] - s[k - 1][0], s[k][1] - s[k - 1][1]);
+  const [x, y] = view.toScreen(...d.pts[d.pts.length - 1]);
+  ctx.font = '12px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,13,20,0.9)'; ctx.strokeText(fmtLen(len), x + 12, y + 10);
+  ctx.fillStyle = '#ffffff'; ctx.fillText(fmtLen(len), x + 12, y + 10);
 }
 
 /** The outline of the selected area or of the floating cells (two-tone dashes). */
@@ -1848,6 +1948,12 @@ canvas.addEventListener('pointerdown', e => {
     requestRender();
     return;
   }
+  if (tool === 'path') {
+    if (L?.type !== 'vector') { toast('Select a vector layer to draw paths'); return; }
+    if (!canEdit(L)) return;
+    draftDown('path', 'line', x, z, e, sx, sy);
+    return;
+  }
   if (tool === 'add') {
     if (L?.type !== 'objects') { toast('Select an objects layer to add objects'); return; }
     if (canEdit(L)) addObject(L, x, z);
@@ -1856,6 +1962,30 @@ canvas.addEventListener('pointerdown', e => {
   if (tool === 'select') {
     // handles of the single selected object first
     const SL = S.sel.layer;
+    if (SL && S.sel.ids.size === 1 && SL.meta.visible && !SL.meta.locked && selectedItems()[0]?.points) {
+      const it = selectedItems()[0], near = ([px, py]) => Math.hypot(sx - px, sy - py) <= 7;
+      const k = it.points.findIndex(p => near(view.toScreen(p[0], p[1])));
+      if (k >= 0) { // a point: select it (Alt+click: delete it) and drag it
+        if (e.altKey) { deletePoint(SL, it, k); return; }
+        S.vtx = k;
+        drag = { mode: 'vertex', layer: SL, it, k, before: cloneItems(SL.items) };
+        renderProps();
+        requestRender();
+        return;
+      }
+      const mid = pathMiddles(it).find(near);
+      if (mid) { // between two points: a new point there
+        const before = cloneItems(SL.items), a = it.points[mid[2]], b = it.points[(mid[2] + 1) % it.points.length];
+        const p = [r2((a[0] + b[0]) / 2), r2((a[1] + b[1]) / 2)];
+        if (a.length > 2 || b.length > 2) p.push(r2(((a[2] ?? SL.widthOf(it)) + (b[2] ?? SL.widthOf(it))) / 2));
+        it.points.splice(mid[2] + 1, 0, p);
+        S.vtx = mid[2] + 1;
+        drag = { mode: 'vertex', layer: SL, it, k: mid[2] + 1, before, moved: true };
+        renderProps();
+        requestRender();
+        return;
+      }
+    }
     if (SL && S.sel.ids.size === 1 && SL.meta.visible && !SL.meta.locked) {
       const it = selectedItems()[0];
       const h = it && rotateHandle(SL, it);
@@ -1883,7 +2013,7 @@ canvas.addEventListener('pointerdown', e => {
       if (ids.has(hit.it.id)) {
         drag = {
           mode: 'move', layer: hit.layer, start: [x, z], before: cloneItems(hit.layer.items),
-          orig: new Map(selectedItems().map(i => [i.id, { x: i.x, z: i.z, a: i.a && [...i.a], b: i.b && [...i.b] }])),
+          orig: new Map(selectedItems().map(i => [i.id, structuredClone(i)])),
         };
       }
     } else {
@@ -1917,9 +2047,7 @@ canvas.addEventListener('pointermove', e => {
       const dx = x - drag.start[0], dz = z - drag.start[1];
       for (const it of drag.layer.items) {
         const o = drag.orig.get(it.id);
-        if (!o) continue;
-        it.x = +(o.x + dx).toFixed(2); it.z = +(o.z + dz).toFixed(2);
-        if (o.a) { it.a = [+(o.a[0] + dx).toFixed(2), +(o.a[1] + dz).toFixed(2)]; it.b = [+(o.b[0] + dx).toFixed(2), +(o.b[1] + dz).toFixed(2)]; }
+        if (o) placeShifted(it, o, dx, dz);
       }
       drag.moved = true;
     } else if (drag.mode === 'rotate') {
@@ -1930,6 +2058,9 @@ canvas.addEventListener('pointermove', e => {
       drag.moved = true;
     } else if (drag.mode === 'end') {
       drag.it[drag.end] = [+x.toFixed(2), +z.toFixed(2)];
+      drag.moved = true;
+    } else if (drag.mode === 'vertex') { // a point of a path
+      drag.it.points[drag.k] = [r2(x), r2(z), ...drag.it.points[drag.k].slice(2)];
       drag.moved = true;
     }
   }
@@ -1949,7 +2080,7 @@ function endDrag() {
   } else if (d.mode === 'float') renderOptions();
   else if (d.mode === 'box') {
     const [x0, z0, x1, z1] = S.box;
-    const inBox = it => it.x >= x0 && it.x <= x1 && it.z >= z0 && it.z <= z1;
+    const inBox = it => { const [x, z] = itemCenter(it); return x >= x0 && x <= x1 && z >= z0 && z <= z1; };
     // the selected objects layer, else the top visible unlocked one with something in the box
     const L = S.active?.hasItems ? S.active : objectLayersTopDown().find(l => l.items.some(inBox));
     if (L && L.meta.visible && Math.max(x1 - x0, z1 - z0) * view.scale > 3) {
@@ -1959,11 +2090,11 @@ function endDrag() {
       select(L, ids);
     }
     S.box = null;
-  } else if (['move', 'rotate', 'end'].includes(d.mode) && d.moved) {
+  } else if (['move', 'rotate', 'end', 'vertex'].includes(d.mode) && d.moved) {
     const L = d.layer, before = d.before, after = cloneItems(L.items);
     const apply = items => { L.items = cloneItems(items); L.dirty = true; };
     L.dirty = true;
-    pushUndo({ label: d.mode === 'rotate' ? 'rotate' : 'move', layer: L, content: true, undo: () => apply(before), redo: () => apply(after) });
+    pushUndo({ label: d.mode === 'rotate' ? 'rotate' : d.mode === 'vertex' ? 'move a point' : 'move', layer: L, content: true, undo: () => apply(before), redo: () => apply(after) });
     renderProps();
   }
   if (d.mode === 'pan') { canvas.style.cursor = ''; saveUi(); }
@@ -2039,6 +2170,7 @@ window.addEventListener('keydown', e => {
   if (e.key === ' ') { if (!spaceDown) { spaceDown = true; updateCursor(); } e.preventDefault(); return; }
   if (e.key === 'Escape') {
     if (S.draft) S.draft = null;
+    else if (S.vtx != null) { S.vtx = null; renderProps(); } // the point first, then the path
     else if (S.float) cancelFloat();
     else if (S.measure || S.sel.ids.size) { S.measure = null; select(S.sel.layer, []); }
     else if (S.area) setArea(null);
@@ -2160,7 +2292,7 @@ function defaultTool(layer) {
 
 function setActive(layer, render = true) {
   if (S.float && S.float.layer !== layer) commitFloat();
-  if (S.draft && S.draft.kind === 'shape' && S.draft.layer !== layer) S.draft = null;
+  if (S.draft && (S.draft.kind === 'shape' || S.draft.kind === 'path') && S.draft.layer !== layer) S.draft = null;
   S.active = layer || null;
   if (!layer || !S.layerSel.has(layer.id)) { S.layerSel = new Set(layer ? [layer.id] : []); S.groupSel = null; }
   if (layer && !toolFits(S.tool, layer) && EDIT_TOOLS.includes(S.tool)) S.tool = defaultTool(layer);
@@ -2181,7 +2313,7 @@ const TOOLBAR = [
   [{ tool: 'area', area: 'rect', label: 'Rect', icon: 'square-dashed' }, { tool: 'area', area: 'ellipse', label: 'Ellipse', icon: 'circle-dashed' },
     { tool: 'area', area: 'free', label: 'Lasso', icon: 'lasso' }, { tool: 'area', area: 'polygon', label: 'Polygon', icon: 'pentagon', dashed: true },
     { tool: 'area', area: 'wand', label: 'Wand', icon: 'wand-sparkles' }],
-  [{ tool: 'add', label: 'Add Object', icon: 'map-pin-plus' }],
+  [{ tool: 'add', label: 'Add Object', icon: 'map-pin-plus' }, { tool: 'path', label: 'Path', icon: 'pen-tool' }],
   [{ tool: 'note', label: 'Note', icon: 'sticky-note' }],
   [{ tool: 'measure', label: 'Measure', icon: 'ruler' }],
 ];
@@ -2229,7 +2361,7 @@ function renderOptions() {
   if (t === 'note') { renderNoteOptions(box); return; }
   if (!L) { box.append(el('div', { class: 'hint' }, 'Select a layer.')); return; }
   if (t === 'select') {
-    box.append(el('div', { class: 'hint' }, 'Click an object or a note (on any visible unlocked layer) or drag a box. Drag to move, drag the orange dot to rotate (Shift: 15° steps). Shift+click adds to the selection. Double-click a note to edit it. Ctrl+C / Ctrl+V copy and paste (at the cursor).'));
+    box.append(el('div', { class: 'hint' }, 'Click an object, a note or a path (on any visible unlocked layer) or drag a box. Drag to move, drag the orange dot to rotate (Shift: 15° steps). Shift+click adds to the selection. Double-click a note to edit it. A selected path: drag its points, drag a small circle to add a point, Alt+click a point to delete it. Ctrl+C / Ctrl+V copy and paste (at the cursor).'));
     return;
   }
   if (['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'add'].includes(t) && !toolFits(t, L)) {
@@ -2265,6 +2397,15 @@ function renderOptions() {
         : `${b.mode === 'raise' ? 'Raises' : 'Lowers'} the ground by up to Amount in one stroke.`));
   } else if (t === 'picker') {
     box.append(el('div', { class: 'hint' }, 'Click the map to take the value under the cursor for the brush.'));
+  } else if (L.type === 'vector' && t === 'path') {
+    const kinds = L.kinds(), dl = $('#kinds');
+    dl.innerHTML = '';
+    kinds.forEach(k => dl.append(el('option', { value: k })));
+    const input = el('input', { value: S.pathKind || kinds[0] || '', list: 'kinds', placeholder: L.meta.name.toLowerCase(), onchange: () => { S.pathKind = input.value; } });
+    box.append(row('Kind', input));
+    const w = el('input', { type: 'number', min: 0, step: niceUnit(0.5), value: L.meta.width, style: 'width:64px', onchange: () => { setMeta(L, 'width', Math.max(0, +w.value || 0), 'path width'); requestRender(); } });
+    box.append(row('Width', w, unit(`${ul()} (the layer's paths)`)));
+    box.append(el('div', { class: 'hint' }, 'Click to put points; double-click or Enter finishes, a click on the first point closes the path (an area). Backspace removes the last point, Esc cancels, Shift: 15° steps. Then Select (V) edits it: drag its points, drag a small circle to add a point, Alt+click a point to delete it.'));
   } else if (L.type === 'objects' && t === 'add') {
     const kinds = L.kinds();
     const dl = $('#kinds');
@@ -2423,7 +2564,7 @@ function drawThumb(L, cv) {
   const s = Math.min(W / w.width, H / w.height), v = new View(cv, w);
   Object.assign(v, { dpr: 1, w: W, h: H, scale: s, ox: (W - w.width * s) / 2, oy: (H - w.height * s) / 2, texture: true });
   c.save();
-  if (L.hasItems && L.meta.style !== 'footprint') { // points
+  if (L.hasItems && L.meta.style !== 'footprint' && L.type !== 'vector') { // points
     c.fillStyle = L.meta.color || '#ffd25a';
     for (const it of L.items) { const [x, y] = v.toScreen(it.x, it.z); c.fillRect(x - 1, y - 1, 2.5, 2.5); }
   } else L.draw(c, v, null);
@@ -2632,10 +2773,10 @@ function setLayerGroup(L, g) {
 function newLayerMeta(name, type, color, group, note) {
   const meta = { id: slug(name), name, group: group || 'Custom', type, visible: true, opacity: type === 'mask' ? 0.7 : 1, locked: false, custom: true };
   if (note) meta.note = note;
-  if (type === 'mask' || type === 'objects' || type === 'notes') meta.color = color;
+  if (type === 'mask' || type === 'objects' || type === 'notes' || type === 'vector') meta.color = color;
   if (type === 'category') meta.classes = [{ name: 'none', color: null }, { name: 'class 1', color }, { name: 'class 2', color: '#5a9ae0' }];
-  if (type === 'height') meta.contour = 1;
-  if (type === 'objects') Object.assign(meta, { style: 'marker', marker: 'circle', size: 2, label: '{kind}' });
+  if (type === 'objects') Object.assign(meta, { style: 'marker', marker: 'circle', size: inUnit(2), label: '{kind}' });
+  if (type === 'vector') Object.assign(meta, { width: inUnit(4), smooth: true, fill: 0.25, label: '' });
   return meta;
 }
 
@@ -2695,7 +2836,7 @@ async function openNewLayer() {
   f('color').value = ['#e05a9a', '#5ae0c8', '#e0d25a', '#9a7ae0', '#5a9ae0'][S.layers.length % 5];
   const sync = () => {
     dlg.querySelector('.for-image').hidden = f('type').value !== 'image';
-    dlg.querySelector('.for-color').hidden = !['mask', 'objects', 'notes', 'category'].includes(f('type').value);
+    dlg.querySelector('.for-color').hidden = !['mask', 'objects', 'notes', 'category', 'vector'].includes(f('type').value);
   };
   f('type').onchange = sync;
   sync();
@@ -2854,6 +2995,7 @@ function renderSelectionProps(box) {
   const items = selectedItems();
   if (items.length) {
     if (S.sel.layer.type === 'notes') renderNoteProps(box, S.sel.layer, items);
+    else if (S.sel.layer.type === 'vector') renderPathProps(box, S.sel.layer, items);
     else renderObjectProps(box, S.sel.layer, items);
     return;
   }
@@ -2879,13 +3021,14 @@ function renderSelectionProps(box) {
 /** The objects (or notes) of the selected layer, with a filter; a click selects one and shows it on the map. */
 function renderObjectList(box) {
   const L = S.active;
-  if (!L?.hasItems) { box.append(el('div', { class: 'hint' }, 'Select an objects or notes layer to list what is on it.')); return; }
+  if (!L?.hasItems) { box.append(el('div', { class: 'hint' }, 'Select an objects, notes or vector layer to list what is on it.')); return; }
   const q = el('input', { value: S.objFilter, placeholder: L.type === 'notes' ? 'Filter by text…' : 'Filter by kind, zone, property…', oninput: () => { S.objFilter = q.value; fill(); } });
   const count = el('span', { class: 'muted small' });
   box.append(el('div', { class: 'row' }, el('label', {}, ME.icon('search')), el('div', { class: 'inline' }, q)), count);
   const list = el('div', { class: 'obj-list' });
   box.append(list);
-  const labelOf = it => (L.type === 'notes' ? (it.text || '').split('\n')[0] : it.kind + (it.props?.pack_size ? ` ×${it.props.pack_size}` : ''));
+  const labelOf = it => (L.type === 'notes' ? (it.text || '').split('\n')[0] : L.type === 'vector' ? `${it.kind} · ${fmtLen(L.length(it), 0)}`
+    : it.kind + (it.props?.pack_size ? ` ×${it.props.pack_size}` : ''));
   function fill() {
     const f = S.objFilter.trim().toLowerCase();
     const items = L.items.filter(it => !f || JSON.stringify([it.kind, it.zone, it.text, it.props]).toLowerCase().includes(f));
@@ -2900,12 +3043,12 @@ function renderObjectList(box) {
           const ids = new Set(ev.shiftKey && S.sel.layer === L ? S.sel.ids : []);
           if (ids.has(it.id)) ids.delete(it.id); else ids.add(it.id);
           select(L, ids);
-          const [sx, sy] = view.toScreen(it.x, it.z); // bring it into the middle of the map view
+          const [sx, sy] = view.toScreen(...itemCenter(it)); // bring it into the middle of the map view
           view.pan(view.w / 2 - sx, view.h / 2 - sy);
           saveUi();
           requestRender();
         },
-      }, el('span', { class: 'kind' }, labelOf(it)), el('span', {}, it.x.toFixed(1)), el('span', {}, it.z.toFixed(1))));
+      }, el('span', { class: 'kind' }, labelOf(it)), ...itemCenter(it).map(v => el('span', {}, v.toFixed(ME.unitDigits(mapUnit(), 1))))));
     }
   }
   fill();
@@ -2926,7 +3069,7 @@ function renderLayerProps(box) {
   box.append(row('Locked', lock));
   const [opR, opN] = slider(0, 100, 1, Math.round((m.opacity ?? 1) * 100), v => { m.opacity = v / 100; saveLayerView(); requestRender(); });
   box.append(row('Opacity', opR, opN, el('span', { class: 'muted' }, '%')));
-  if (m.type === 'mask' || m.type === 'objects' || m.type === 'notes') {
+  if (m.type === 'mask' || m.type === 'objects' || m.type === 'notes' || m.type === 'vector') {
     const before = m.color;
     const c = el('input', { type: 'color', value: m.color || '#888888' });
     c.addEventListener('input', () => { m.color = c.value; L.metaChanged('color'); requestRender(); });
@@ -2961,6 +3104,22 @@ function renderLayerProps(box) {
   if (m.type === 'notes') {
     box.append(row('Notes', el('span', {}, String(L.items.length))));
     box.append(el('div', { class: 'hint' }, 'Color: of the notes without their own color. Note tool (N): click the map to pin a note.'));
+  }
+  if (m.type === 'vector') {
+    const w = el('input', { type: 'number', min: 0, step: niceUnit(0.5), value: m.width, style: 'width:64px', onchange: () => setMeta(L, 'width', Math.max(0, +w.value || 0), 'path width') });
+    box.append(row('Width', w, unit(`${ul()} (paths without their own)`)));
+    const sm = el('input', { type: 'checkbox', class: 'switch', checked: !!m.smooth, onchange: () => setMeta(L, 'smooth', sm.checked, 'smooth paths') });
+    box.append(row('Smooth', sm, unit('curves through the points')));
+    const dash = el('input', { type: 'checkbox', class: 'switch', checked: !!m.dash, onchange: () => setMeta(L, 'dash', dash.checked, 'dashed paths') });
+    box.append(row('Dashed', dash, unit('borders')));
+    const [fR, fN] = slider(0, 100, 1, Math.round((m.fill ?? 0.25) * 100), v => { m.fill = v / 100; markMeta(); requestRender(); });
+    box.append(row('Area fill', fR, fN, unit('% (closed paths)')));
+    const lab = el('input', { value: m.label || '', placeholder: '{kind}', onchange: () => setMeta(L, 'label', lab.value, 'label') });
+    box.append(row('Label', lab));
+    let total = 0;
+    for (const it of L.items) total += L.length(it);
+    box.append(row('Paths', el('span', {}, `${L.items.length}, ${fmtLen(total, 0)} long`)));
+    box.append(el('div', { class: 'hint' }, 'Path tool (D): click points on the map. Select (V): click a path to edit it. To put paths into a mask, categories or height layer, select them: Selection → Paint into a layer.'));
   }
   if (m.type === 'objects') {
     const style = el('select', { onchange: () => setMeta(L, 'style', style.value, 'objects style') },
@@ -3099,28 +3258,109 @@ function renderObjectProps(box, L, items) {
     }
     const zone = el('input', { value: it.zone || '', onchange: () => edit('zone', o => { if (zone.value.trim()) o.zone = zone.value.trim(); else delete o.zone; }) });
     box.append(row('Zone', zone));
-    box.append(el('h4', {}, 'Properties'));
-    const table = el('div', { class: 'props-table' });
-    for (const [k, v] of Object.entries(it.props || {})) {
-      const key = el('input', { value: k });
-      const val = el('input', { value: typeof v === 'string' ? v : JSON.stringify(v) });
-      const set = () => edit('property', o => {
-        const p = { ...(o.props || {}) };
-        delete p[k];
-        if (key.value.trim()) p[key.value.trim()] = parseValue(val.value);
-        o.props = p;
-      });
-      key.onchange = set; val.onchange = set;
-      table.append(key, val, el('button', { class: 'icon-btn', title: 'Remove', onclick: () => edit('remove property', o => { delete o.props[k]; }) }, '✕'));
-    }
-    box.append(table);
-    box.append(el('button', { onclick: () => edit('add property', o => { o.props = { ...(o.props || {}), [`key${Object.keys(o.props || {}).length + 1}`]: '' }; }) }, '＋ Property'));
+    propsEditor(box, it, edit);
     box.append(el('div', { class: 'hint' }, `id ${it.id}. Numbers and true/false are stored as such.`));
   }
   box.append(el('div', { class: 'layer-actions' },
     el('button', { onclick: duplicateSelected }, 'Duplicate'),
     el('button', { class: 'danger', onclick: deleteSelected }, 'Delete'),
     el('button', { onclick: () => select(L, []) }, 'Deselect')));
+}
+
+/** The selected paths: kind, width, closed, smooth, the selected point, properties; Paint into a layer. */
+function renderPathProps(box, L, items) {
+  box.append(el('div', { class: 'section-head' }, items.length === 1 ? 'Path' : `${items.length} paths`, el('span', { class: 'muted' }, `· ${L.meta.name}`)));
+  const edit = (label, fn) => { editObjects(L, label, () => { for (const it of selectedItems()) fn(it); }); renderProps(); requestRender(); };
+  const kind = el('input', { value: items.every(i => i.kind === items[0].kind) ? items[0].kind : '', list: 'kinds', placeholder: '(mixed)',
+    onchange: () => { if (kind.value.trim()) edit('kind', it => { it.kind = kind.value.trim(); }); renderLayers(); } });
+  const dl = $('#kinds');
+  dl.innerHTML = '';
+  L.kinds().forEach(k => dl.append(el('option', { value: k })));
+  box.append(row('Kind', kind));
+  const one = items.length === 1 ? items[0] : null;
+  const w = el('input', { type: 'number', min: 0, step: niceUnit(0.5), value: one?.width ?? '', placeholder: `${fmt(L.meta.width)} (layer)`, style: 'width:72px',
+    onchange: () => edit('path width', it => { if (w.value === '') delete it.width; else it.width = Math.max(0, +w.value); }) });
+  box.append(row('Width', w, unit(ul())));
+  const flag = (key, label, value, hint) => {
+    const cb = el('input', { type: 'checkbox', class: 'switch', checked: value, onchange: () => edit(label, it => { it[key] = cb.checked; if (key === 'closed' && !cb.checked) delete it.closed; }) });
+    box.append(row(label[0].toUpperCase() + label.slice(1), cb, unit(hint)));
+  };
+  flag('closed', 'closed', items.every(i => i.closed), 'an area: the last point joins the first');
+  flag('smooth', 'smooth', items.every(i => L.smoothOf(i)), 'a curve through the points');
+  if (one) {
+    const area = L.area(one);
+    box.append(row('Size', el('span', {}, `${one.points.length} points, ${fmtLen(L.length(one))}${area ? `, ${fmt(+area.toPrecision(4))} ${ul()}²` : ''}`)));
+    const k = S.vtx;
+    if (k != null && one.points[k]) {
+      const p = one.points[k], num = (i, ph) => el('input', { type: 'number', step: niceUnit(i === 2 ? 0.5 : 0.1), value: p[i] ?? '', placeholder: ph, style: 'width:54px',
+        onchange: ev => edit('point', it => {
+          const q = [...it.points[k]];
+          if (ev.target.value === '' && i === 2) q.length = 2; else q[i] = r2(+ev.target.value);
+          it.points[k] = q;
+        }) });
+      box.append(el('h4', {}, `Point ${k + 1} of ${one.points.length}`));
+      box.append(row('Position', unit('x'), num(0), unit('z'), num(1)));
+      box.append(row('Width here', num(2, 'path'), unit(`${ul()} (empty: the path's)`)));
+      box.append(el('div', { class: 'layer-actions' }, el('button', { onclick: () => deletePoint(L, one, k) }, 'Delete point')));
+    } else box.append(el('div', { class: 'hint' }, 'Click a point to edit it (its own width: a river that widens); drag a small circle to add a point; Alt+click a point deletes it.'));
+    propsEditor(box, one, edit);
+    box.append(el('div', { class: 'hint' }, `id ${one.id}.`));
+  }
+  box.append(el('div', { class: 'layer-actions' },
+    el('button', { onclick: duplicateSelected }, 'Duplicate'),
+    el('button', { class: 'danger', onclick: () => { S.vtx = null; deleteSelected(); } }, 'Delete'),
+    el('button', { onclick: () => select(L, []) }, 'Deselect')));
+  // into a raster layer: with the brush value (density, class, height), as wide as the paths, closed ones filled
+  const targets = S.layers.filter(l => l.raster).reverse();
+  if (!targets.length) return;
+  box.append(el('h4', {}, 'Paint into a layer'));
+  if (!targets.some(l => l.id === S.paintTarget)) S.paintTarget = targets[0].id;
+  const T = layerById(S.paintTarget);
+  const sel = el('select', { onchange: () => { S.paintTarget = sel.value; renderProps(); } },
+    ...targets.map(l => el('option', { value: l.id, selected: l === T }, `${l.meta.name} (${TYPE_NAMES[l.type].toLowerCase()})`)));
+  box.append(row('Layer', sel));
+  box.append(...paintValueRows(T));
+  if (T.type !== 'category') box.append(row('Soft edge', ...slider(0, inUnit(20), niceUnit(0.25), S.brush.feather, v => { S.brush.feather = v; saveUi(); }), unit(ul())));
+  const fill = el('input', { type: 'checkbox', checked: S.paintFill !== false, onchange: () => { S.paintFill = fill.checked; } });
+  box.append(row('', el('label', { class: 'check' }, fill, ' Fill closed paths (areas)')));
+  box.append(el('div', { class: 'layer-actions' }, el('button', { class: 'primary', onclick: () => paintPaths(L, selectedItems(), T) }, `Paint ${items.length > 1 ? items.length + ' paths' : 'the path'} into ${T.meta.name}`)));
+}
+
+/** Paints paths into a raster layer, as wide as they are (closed ones filled), with the brush value and soft edge. */
+function paintPaths(L, items, T) {
+  if (!T || !S.layers.includes(T) || !canEdit(T)) return;
+  let cov = null;
+  for (const it of items) {
+    const pts = L.samples(it).map(([x, z, w]) => [...toCell(x, z), w / mpp()]);
+    cov = ME.mergeCoverage(cov, ME.ribbonCoverage(T.cols, T.rows, {
+      pts, closed: !!it.closed, fill: !!it.closed && S.paintFill !== false, feather: T.type === 'category' ? 0 : S.brush.feather / mpp(),
+    }));
+  }
+  if (!cov) { toast('The paths are outside the map'); return; }
+  paintCoverage(T, cov, `paint ${items.length > 1 ? items.length + ' paths' : items[0].kind} into ${T.meta.name}`);
+  renderSaveState();
+  renderLayers();
+  toast(`Painted into ${T.meta.name}`, 1500);
+}
+
+/** The gameplay properties of an item: a key-value table, ＋ Property. edit(label, fn) changes the selected items. */
+function propsEditor(box, it, edit) {
+  box.append(el('h4', {}, 'Properties'));
+  const table = el('div', { class: 'props-table' });
+  for (const [k, v] of Object.entries(it.props || {})) {
+    const key = el('input', { value: k });
+    const val = el('input', { value: typeof v === 'string' ? v : JSON.stringify(v) });
+    const set = () => edit('property', o => {
+      const p = { ...(o.props || {}) };
+      delete p[k];
+      if (key.value.trim()) p[key.value.trim()] = parseValue(val.value);
+      o.props = p;
+    });
+    key.onchange = set; val.onchange = set;
+    table.append(key, val, el('button', { class: 'icon-btn', title: 'Remove', onclick: () => edit('remove property', o => { delete o.props[k]; }) }, '✕'));
+  }
+  box.append(table);
+  box.append(el('button', { onclick: () => edit('add property', o => { o.props = { ...(o.props || {}), [`key${Object.keys(o.props || {}).length + 1}`]: '' }; }) }, '＋ Property'));
 }
 
 function parseValue(s) {
@@ -3260,11 +3500,12 @@ function openMapDialog(mode) {
   dlg.showModal();
 }
 
-/** Scales the lengths in the settings of a layer (heights, contours, marker sizes, where a picture lies). */
+/** Scales the lengths in the settings of a layer (heights, contours, marker sizes, path widths, where a picture lies). */
 function scaleMeta(m, f) {
   if (m.encoding) m.encoding = { offset: +(m.encoding.offset * f).toPrecision(10), step: +(m.encoding.step * f).toPrecision(10) };
   if (m.contour) m.contour = +(m.contour * f).toPrecision(6);
   if (m.size) m.size = +(m.size * f).toPrecision(6);
+  if (m.width) m.width = +(m.width * f).toPrecision(6);
   if (m.rect) { const r = ME.normRect(m.rect); m.rect = { x0: r.x0 * f, z0: r.z0 * f, width: r.width * f, height: r.height * f }; }
   return m;
 }
@@ -3287,6 +3528,8 @@ function changeUnit(unitId, f = 1) {
       const o = structuredClone(it);
       for (const k of ['x', 'z', 'w', 'd', 'ox', 'oz']) if (typeof o[k] === 'number') o[k] = +(o[k] * f).toFixed(3);
       for (const k of ['a', 'b']) if (Array.isArray(o[k])) o[k] = o[k].map(v => +(v * f).toFixed(3));
+      if (typeof o.width === 'number') o.width = +(o.width * f).toFixed(3);
+      if (Array.isArray(o.points)) o.points = o.points.map(p => p.map(v => +(v * f).toFixed(3)));
       return o;
     };
     S.layers = S.layers.map(l => {
@@ -3386,6 +3629,9 @@ function basicLayers(unitId = 'm') {
       { name: 'river', color: '#4a8ad0' }, { name: 'swamp', color: '#7a8a3a' }, { name: 'quarry', color: '#9a8a7a' }] }),
     L('water', 'Water', 'Terrain', 'mask', { color: '#3d7fb5', opacity: 0.6 }),
     L('roads', 'Roads & paths', 'Terrain', 'mask', { color: '#c8a46a', opacity: 0.8 }),
+    L('rivers', 'Rivers', 'Lines', 'vector', { color: '#3d7fb5', width: size(6), smooth: true, fill: 0.35, note: 'Rivers and streams: a point can have its own width.' }),
+    L('road_lines', 'Roads', 'Lines', 'vector', { color: '#d9b36c', width: size(4), smooth: true, fill: 0.25 }),
+    L('borders', 'Borders', 'Lines', 'vector', { color: '#f0f0f0', width: 0, smooth: false, dash: true, fill: 0.08, label: '{kind}', note: 'Borders of areas: closed paths.' }),
     L('rocks', 'Rocks & cliffs', 'Rocks', 'mask', { color: '#8f8a84', opacity: 0.75 }),
     L('grass', 'Grass', 'Greenery', 'mask', { color: '#a6cc5c', opacity: 0.55 }),
     L('bushes', 'Bushes', 'Greenery', 'mask', { color: '#5fa63c', opacity: 0.75 }),
@@ -3482,7 +3728,7 @@ function renderStatus() {
         const v = l.type === 'category' && !l.data[i] ? '—' : l.describe(i);
         item(l.meta.name, v, { cls: l === A ? 'active' : '', id: l.id, w: valueWidth(l), num: l.type !== 'category' });
       }
-      if (A?.type === 'objects') {
+      if (A?.type === 'objects' || A?.type === 'vector') {
         const hit = A.meta.visible ? A.hit(x, z, view) : null;
         if (hit) item(`${A.meta.name}:`, `${hit.kind}${hit.props ? ' ' + Object.entries(hit.props).map(([k, v]) => `${k}=${v}`).join(' ') : ''}`, { cls: 'active' });
       }

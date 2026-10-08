@@ -12,13 +12,15 @@ properties on the right](docs/screenshot.jpg)
 
 ## What it does
 
-- **Layers of five kinds** (and a picture layer for references):
+- **Layers of six kinds** (and a picture layer for references):
   - *Masks* — density 0–100 % per cell: trees, grass, water, roads…
   - *Categories* — a class per cell: ground types, biomes, zones…
   - *Height* — the terrain.
   - *Objects* — placed things with a kind, position, rotation, footprint and properties: buildings, enemies, chests,
     spawn points, two-ended links such as shortcuts.
   - *Notes* — text pinned to the map.
+  - *Vector* — roads, rivers, borders: smooth or straight lines through points, with a width that may change along
+    them; closed ones are areas. Paint them into a mask, categories or height layer when they should become pixels.
 
   Layers live in groups; they can be shown, hidden, locked, faded, reordered, renamed and described.
 - **Painting**: brush, eraser, smooth, flood fill, pick; shapes — rectangle, ellipse, polygon, line, freehand —
@@ -67,6 +69,7 @@ my-world/
     ground.png         palette PNG: the index is the class
     trees.png          8-bit grayscale: 0–255 = density 0–100 %
     buildings.json     {"items": [{id, kind, x, z, yaw, w, d, …}, …]}
+    rivers.json        {"items": [{id, kind, points: [[x, z, width?], …], closed?}, …]}
     notes.json
 ```
 

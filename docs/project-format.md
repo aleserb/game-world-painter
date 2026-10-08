@@ -67,16 +67,20 @@ A layer entry:
 |-------|--------|---------|
 | `id` | all | Unique, used for the default file name |
 | `name`, `group`, `note` | all | The name, the group in the Layers panel, a description |
-| `type` | all | `mask`, `category`, `height`, `objects`, `notes` or `image` |
-| `file` | all | The file, relative to the folder. Default: `layers/<id>.png` (`.json` for objects and notes) |
+| `type` | all | `mask`, `category`, `height`, `objects`, `notes`, `vector` or `image` |
+| `file` | all | The file, relative to the folder. Default: `layers/<id>.png` (`.json` for objects, notes and vector layers) |
 | `visible`, `opacity`, `locked` | all | Defaults; each browser keeps its own view settings |
-| `color` | mask, objects, notes | The color it is drawn with (for notes: of the notes without their own color) |
+| `color` | mask, objects, notes, vector | The color it is drawn with (for notes: of the notes without their own color) |
 | `classes` | category | `[{name, color}]`; index 0 is “none” with color `null` |
 | `encoding` | height | `{offset, step}`: height = offset + value × step |
 | `contour` | height | Contour lines every so many units (0: none) |
 | `style` | objects | `marker` (a symbol), `footprint` (the object's rectangle) or `link` (two ends) |
 | `marker`, `size` | objects | The symbol — `circle`, `square`, `diamond`, `triangle`, `cross` — and its size |
-| `label` | objects | A label template: `{kind}`, `{<field>}` or `{<property>}`, e.g. `{kind} ×{pack_size}` |
+| `label` | objects, vector | A label template: `{kind}`, `{<field>}` or `{<property>}`, e.g. `{kind} ×{pack_size}` |
+| `width` | vector | The width of the paths without their own (0: a thin line) |
+| `smooth` | vector | `true`: the paths are curves through their points (centripetal Catmull-Rom); `false`: straight segments |
+| `dash` | vector | `true`: drawn dashed (borders) |
+| `fill` | vector | The opacity (0–1) of the inside of closed paths |
 | `blend` | image | `normal`, `multiply` (white is see-through) or `screen` (black is see-through) |
 | `rect` | image | `{x0, z0, width, height}`: where the picture lies if it does not cover the map |
 | `custom` | all | `true` for layers made in the app |
@@ -92,6 +96,7 @@ Other fields are kept as they are, so a script can store its own settings on a l
 | `height` | 16-bit grayscale PNG | height = `encoding.offset` + value × `encoding.step` (in meters e.g. −20 + value / 1000: −20 … 45.535 m) |
 | `objects` | JSON | `{"items": [ … ]}`, one object per line (a plain array is read too) |
 | `notes` | JSON | `{"items": [ … ]}` |
+| `vector` | JSON | `{"items": [ … ]}`, one path per line |
 | `image` | PNG, WebP or JPEG | Any picture, stretched over the map (or over `rect`) |
 
 Reading is lenient: masks may be RGB (luminance is used), categories may be RGB (the nearest class color is used),
@@ -128,6 +133,28 @@ and fully transparent pixels count as 0 / none. When heights do not fit the enco
 ```
 
 `text` may have line breaks; `color` is optional.
+
+### Vector paths
+
+Roads, rivers, borders: lines through points, open or closed (an area).
+
+```json
+{"items": [
+{"id":1,"kind":"river","points":[[-68,10,2.5],[-78,22],[-90,20,5],[-104,30,8]],"props":{"name":"Lake Run"}},
+{"id":2,"kind":"bandit land","closed":true,"points":[[34,-22],[70,-20],[82,-48],[64,-78],[34,-72],[26,-46]]}
+]}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `id`, `kind`, `props` | As for objects |
+| `points` | `[x, z]` or `[x, z, width]`: a point with its own width (a river that widens); between points the width changes evenly |
+| `closed` | `true`: the last point joins the first; the inside is an area |
+| `width` | The width of this path (else the layer's `width`) |
+| `smooth` | `true` or `false` for this path (else the layer's `smooth`) |
+
+The app draws a smooth path as a centripetal Catmull-Rom curve through the points. To use paths as pixels, the app
+paints them into a mask, categories or height layer (Selection → Paint into a layer); a script can do the same.
 
 ## Editing the files from another program
 
