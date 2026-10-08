@@ -22,7 +22,7 @@ const agent = ME.agent = {
   changed() { for (const fn of this.listeners) fn(); },
 };
 
-let es = null, retry = null, queue = Promise.resolve();
+let es = null, retry = null, queue = Promise.resolve(), generation = 0, delay = 2000; // delay: grows while no server answers
 const cancelled = new Set();
 const base = () => settings.url.replace(/\/+$/, '');
 
@@ -32,13 +32,45 @@ function setState(s, error = '') {
   agent.changed();
 }
 
-function connect() {
+/** Why the server cannot be reached: Chrome's permission for this site to reach this device, a refused origin... */
+async function offlineReason(err, status) {
+  if (status === 403) return `The MCP server refused this page (${location.origin}): start it with --allow-origin ${location.origin}`;
+  if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+    for (const name of ['loopback-network', 'local-network-access']) {
+      try {
+        const p = await navigator.permissions.query({ name });
+        if (p.state === 'denied') return 'Chrome does not let this site reach apps on this device. Allow it: the icon left of the address → Site settings → "Apps on this device" (local network access) → Allow';
+        if (p.state === 'prompt') return 'Chrome asks to let this site reach apps on this device: allow it (or no MCP server is running)';
+        break;
+      } catch { /* not this name */ }
+    }
+  }
+  return `No MCP server at ${base()}`;
+}
+
+async function connect() {
   disconnect(true);
   if (!settings.enabled) { setState('off'); return; }
-  setState('connecting');
-  const title = ME.app?.S.project?.title || '';
+  const gen = ++generation;
+  if (agent.state !== 'offline') setState('connecting');
   let url;
   try { url = new URL(`${base()}/app/events`); } catch { setState('offline', 'The server URL is not valid'); return; }
+  // a plain request first: it brings up Chrome's permission prompt for reaching this device, and tells why it fails
+  let status = 0;
+  try {
+    const r = await fetch(`${base()}/status`, { cache: 'no-store', targetAddressSpace: 'loopback' });
+    status = r.status;
+    if (!r.ok || (await r.json()).name !== 'game-world-painter-mcp') throw new Error(`status ${r.status}`);
+  } catch (e) {
+    if (gen !== generation || !settings.enabled) return;
+    setState('offline', await offlineReason(e, status));
+    retry = setTimeout(connect, delay);
+    delay = Math.min(delay * 1.5, 6000); // the server waits a few seconds for the app on a call
+    return;
+  }
+  delay = 2000;
+  if (gen !== generation || !settings.enabled) return;
+  const title = ME.app?.S.project?.title || '';
   url.search = new URLSearchParams({ session: agent.session, api: API, version: VERSION, title }).toString();
   es = new EventSource(url);
   es.addEventListener('hello', e => { agent.server = JSON.parse(e.data); setState(agent.server.agents.length ? 'agent' : 'ready'); });
@@ -48,24 +80,25 @@ function connect() {
   es.addEventListener('replaced', () => { disconnect(true); setState('replaced', 'Another tab or window connected to the MCP server'); });
   es.onerror = () => {
     if (!es) return;
-    if (es.readyState === EventSource.CLOSED) { // the browser gave up (a refused origin, the permission was denied): try again later
+    if (es.readyState === EventSource.CLOSED) { // the browser gave up: try again (and find out why) later
       es.close(); es = null;
-      retry = setTimeout(connect, 5000);
+      retry = setTimeout(connect, 3000);
     }
     agent.server = null;
-    setState('offline', `No MCP server at ${base()}`);
+    setState('offline', `The MCP server at ${base()} went away (it stops with its agent; another agent or a restart brings it back)`);
   };
 }
 
 function disconnect(quiet) {
   clearTimeout(retry);
+  if (!quiet) generation++;
   if (es) { es.close(); es = null; }
   agent.server = null;
   if (!quiet) setState('off');
 }
 
 agent.setEnabled = on => { settings.enabled = !!on; saveSettings(); if (on) connect(); else disconnect(); };
-agent.reconnect = () => { if (settings.enabled) connect(); };
+agent.reconnect = () => { delay = 2000; if (settings.enabled) connect(); };
 agent.setUrl = url => { settings.url = url.trim() || DEFAULTS.url; saveSettings(); agent.reconnect(); };
 
 /** The map title for the status in the server (the agent's view of what is open). */
