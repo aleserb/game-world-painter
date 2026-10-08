@@ -40,6 +40,8 @@ const S = {
   },
   addKind: '',
   sel: { layer: null, ids: new Set() },
+  layerSel: new Set(), // ids of the selected layers (Shift / Ctrl+click in the Layers panel); has the active one
+  layersFocus: false, // the last click was in the Layers panel: Space shows / hides the selected layers
   grid: false,
   collapsed: new Set(),
   cursor: null,
@@ -2027,6 +2029,12 @@ window.addEventListener('keydown', e => {
   if (mod && (k === 'c' || k === 'x')) { e.preventDefault(); copySelection(k === 'x'); return; }
   if (mod && k === 'v') { e.preventDefault(); pasteClip(); return; }
   if (mod) return;
+  if (e.key === ' ' && S.layersFocus && S.active) { // in the Layers panel: show / hide the selected layers
+    e.preventDefault();
+    if (document.activeElement?.closest?.('#layers')) document.activeElement.blur(); // no click on a focused button
+    if (!e.repeat) toggleSelectedVisible();
+    return;
+  }
   if (e.key === ' ') { if (!spaceDown) { spaceDown = true; updateCursor(); } e.preventDefault(); return; }
   if (e.key === 'Escape') {
     if (S.draft) S.draft = null;
@@ -2148,6 +2156,8 @@ function setActive(layer, render = true) {
   if (S.float && S.float.layer !== layer) commitFloat();
   if (S.draft && S.draft.kind === 'shape' && S.draft.layer !== layer) S.draft = null;
   S.active = layer || null;
+  if (!layer) S.layerSel = new Set();
+  else if (!S.layerSel.has(layer.id)) S.layerSel = new Set([layer.id]);
   if (layer && !toolFits(S.tool, layer) && EDIT_TOOLS.includes(S.tool)) S.tool = defaultTool(layer);
   if (S.sel.layer && S.sel.layer !== layer) S.sel = { layer: null, ids: new Set() };
   if (layer?.type === 'category' && S.brush.cls >= layer.meta.classes.length) S.brush.cls = Math.min(1, layer.meta.classes.length - 1);
@@ -2446,9 +2456,10 @@ function renderLayers() {
     const m = L.meta;
     const nameEl = el('span', { class: 'name', title: m.note || '' }, m.name);
     const r = el('div', {
-      class: 'layer-row' + (L === S.active ? ' active' : '') + (m.visible ? '' : ' hidden-layer'), draggable: true,
+      class: 'layer-row' + (L === S.active ? ' active' : S.layerSel.has(L.id) ? ' selected' : '') + (m.visible ? '' : ' hidden-layer'), draggable: true,
       title: `${TYPE_NAMES[m.type]}${m.note ? ': ' + m.note : ''}`,
-      onclick: () => setActive(L),
+      'data-id': L.id,
+      onclick: ev => clickLayer(L, ev),
       ondblclick: () => renameLayer(L, nameEl),
     },
     el('button', {
@@ -2659,14 +2670,66 @@ async function duplicateLayer() {
   insertLayer(layer, `duplicate ${src.meta.name}`);
 }
 
+// --- several selected layers: click selects one, Ctrl/Cmd+click adds or removes one, Shift+click selects the rows
+// between the last clicked one and this one (Ctrl/Cmd+Shift: adds them). The clicked layer is the active one: the
+// tools and the properties work on it; Space, Delete and the eye of the panel work on all the selected.
+let layerAnchor = null;
+
+function selectedLayers() {
+  const list = S.layers.filter(l => S.layerSel.has(l.id));
+  return list.length ? list : S.active ? [S.active] : [];
+}
+
+function clickLayer(L, ev) {
+  const add = ev.ctrlKey || ev.metaKey;
+  if (ev.shiftKey && layerAnchor && layerById(layerAnchor)) {
+    const order = [...document.querySelectorAll('#layer-list .layer-row')].map(r => r.dataset.id);
+    const a = order.indexOf(layerAnchor), b = order.indexOf(L.id);
+    if (a >= 0 && b >= 0) {
+      const range = order.slice(Math.min(a, b), Math.max(a, b) + 1);
+      S.layerSel = new Set(add ? [...S.layerSel, ...range] : range);
+      setActive(L);
+      return;
+    }
+  }
+  layerAnchor = L.id;
+  if (add) {
+    if (S.layerSel.has(L.id) && S.layerSel.size > 1) {
+      S.layerSel.delete(L.id);
+      if (S.active === L) setActive(S.layers.filter(l => S.layerSel.has(l.id)).at(-1));
+      else renderLayers();
+    } else {
+      S.layerSel.add(L.id);
+      setActive(L);
+    }
+    return;
+  }
+  S.layerSel = new Set([L.id]);
+  setActive(L);
+}
+
+/** Space in the Layers panel: shows the selected layers, or hides them when any is visible. */
+function toggleSelectedVisible() {
+  const list = selectedLayers();
+  if (!list.length) return;
+  const show = !list.some(l => l.meta.visible);
+  for (const l of list) l.meta.visible = show;
+  S.solo = null;
+  viewChanged();
+  renderProps();
+}
+
 async function deleteLayer() {
-  const L = S.active;
-  if (!L) return;
-  if (!await ask('Undo brings it back.', { title: `Delete the layer “${L.meta.name}”?`, ok: 'Delete', danger: true })) return;
-  if (!S.layers.includes(L)) return;
-  const list = S.layers.filter(l => l !== L);
-  const k = S.layers.indexOf(L);
-  setLayers(list, list[Math.min(k, list.length - 1)] || null, `delete layer ${L.meta.name}`);
+  const list = selectedLayers();
+  if (!list.length) return;
+  const one = list.length === 1;
+  const names = list.map(l => `“${l.meta.name}”`).join(', ');
+  if (!await ask(one ? 'Undo brings it back.' : `${names}. Undo brings them back.`,
+    { title: one ? `Delete the layer ${names}?` : `Delete ${list.length} layers?`, ok: 'Delete', danger: true })) return;
+  if (!list.every(l => S.layers.includes(l))) return;
+  const rest = S.layers.filter(l => !list.includes(l));
+  const k = Math.min(...list.map(l => S.layers.indexOf(l)));
+  setLayers(rest, rest[Math.min(k, rest.length - 1)] || null, one ? `delete layer ${list[0].meta.name}` : `delete ${list.length} layers`);
   renderAll();
 }
 
@@ -2757,6 +2820,7 @@ function renderObjectList(box) {
 function renderLayerProps(box) {
   const L = S.active;
   if (!L) { box.append(el('div', { class: 'hint' }, 'Select a layer.')); return; }
+  if (S.layerSel.size > 1) box.append(el('div', { class: 'hint' }, `${S.layerSel.size} layers selected; below: the settings of “${L.meta.name}”. Space shows / hides the selected layers, Delete layer deletes them.`));
   const m = L.meta;
   const name = el('input', { value: m.name, onchange: () => setMeta(L, 'name', name.value.trim() || m.name, 'rename layer') });
   box.append(row('Name', name));
@@ -3376,6 +3440,7 @@ $('#status').addEventListener('contextmenu', e => {
 });
 window.addEventListener('pointerdown', e => { if (!e.target.closest('#ctx-menu, #zoom')) closeMenu(); }, true);
 window.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); }, true);
+document.addEventListener('pointerdown', e => { S.layersFocus = !!e.target.closest?.('#layers'); }, true);
 
 function renderSaveState() {
   const s = $('#save-state'), t = $('#target');

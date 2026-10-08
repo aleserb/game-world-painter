@@ -180,6 +180,7 @@ a { color: #9cc8ff; }
 }
 .layer-row:hover { background: var(--hover); }
 .layer-row.active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(59, 142, 234, 0.45); }
+.layer-row.selected { background: rgba(59, 142, 234, 0.13); }
 .layer-row.drop-above { box-shadow: inset 0 2px 0 var(--accent); }
 .layer-row.drop-below { box-shadow: inset 0 -2px 0 var(--accent); }
 .layer-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

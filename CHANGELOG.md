@@ -5,7 +5,8 @@
 - Units: a map can be in meters, centimeters, feet, inches, pixels or plain units (`unit` in `metadata.json`); the
   Map size dialog converts a map to another unit or only renames it.
 - Select tool first in the tool bar, on every layer; in-app confirmation dialogs; a two-column Help.
-- Layers: the eye and the lock appear on hover.
+- Layers: the eye and the lock appear on hover; select several layers (Shift+click: the rows between, Ctrl/Cmd+click:
+  one more), Space shows / hides them, Delete layer deletes them.
 - The scale bar follows the grid.
 
 ## 0.1.0 — 2026-10-08

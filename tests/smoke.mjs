@@ -168,6 +168,30 @@ try {
   const back = await ev(`!!gwp.layerById('bushes')`);
   check(asked && kept && gone && back, 'delete a layer: asks in the page, Cancel keeps it, undo brings it back', `${asked} kept ${kept}, deleted ${gone}, back ${back}`);
 
+  // several layers: Shift+click selects the rows between, Ctrl+click removes one; Space hides / shows them; Delete
+  const clickRow = async (name, modifiers = 0) => {
+    const [x, y] = await ev(`(r => [r.left + r.width / 2, r.top + r.height / 2])([...document.querySelectorAll('#layer-list .layer-row')].find(r => r.querySelector('.name').textContent === ${JSON.stringify(name)}).getBoundingClientRect())`);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers });
+  };
+  const space = async () => { for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: type === 'keyDown' ? ' ' : undefined }); };
+  const selIds = () => ev(`[...gwp.S.layerSel].sort().join(',')`);
+  await clickRow('Trees'); await clickRow('Water', 8); // Shift
+  const range = await selIds();
+  await clickRow('Bushes', process.platform === 'darwin' ? 4 : 2); // Cmd / Ctrl
+  const three = await selIds();
+  await space();
+  const hidden = await ev(`['trees', 'roads', 'water'].every(id => !gwp.layerById(id).meta.visible) && gwp.layerById('bushes').meta.visible`);
+  await space();
+  const shown = await ev(`['trees', 'roads', 'water'].every(id => gwp.layerById(id).meta.visible)`);
+  await ev(`document.getElementById('layer-del').click(); true`);
+  const title = await until(`document.getElementById('confirm-dlg').open && document.querySelector('#confirm-dlg h3').textContent`, 3000);
+  await ev(`document.querySelector('#confirm-dlg .ok').click(); true`);
+  const gone3 = await until(`!gwp.layerById('trees') && !gwp.layerById('roads') && !gwp.layerById('water') && !!gwp.layerById('bushes')`, 3000);
+  await ev(`gwp.undo(); true`);
+  const back3 = await ev(`!!(gwp.layerById('trees') && gwp.layerById('roads') && gwp.layerById('water'))`);
+  check(range === 'bushes,roads,trees,water' && three === 'roads,trees,water' && hidden && shown && title === 'Delete 3 layers?' && gone3 && back3,
+    'select several layers: Shift / Ctrl+click, Space hides and shows them, delete and undo', `${range} | ${three} | hidden ${hidden}, shown ${shown}, ${title}, deleted ${gone3}, back ${back3}`);
+
   // a wider map
   await ev(`gwp.resizeMap({ x0: -160, z0: -128, width: 320, height: 256, cols: 640, rows: 512 }); true`);
   check(await ev(`gwp.layerById('trees').cols === 640 && gwp.layerById('trees').rows === 512`), 'resize the map to 320 x 256 m');
