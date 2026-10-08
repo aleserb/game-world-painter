@@ -157,36 +157,40 @@
 <dialog id="help-dlg">
   <form method="dialog">
     <h3>GameWorld Painter</h3>
-    <p class="muted">Every layer shows one kind of thing on the map seen from above. Pick a tool in the bar at the top, select a layer in the Layers panel, then paint or place objects on it; the Tool Options panel has the settings of the tool, Properties those of the layer (tabs: Layer, Selection, Objects). Click the eye to hide a layer, Alt+click to show only it (Alt+click again to bring the others back). The eye buttons above the list show / hide every layer (hiding keeps the map render; Alt+click hides it too). Visibility, opacity and locks are kept in this browser. The project is a folder (<code>metadata.json</code> and one file per layer): with Autosave on, every change is written there a moment later. The tool checks the folder every second and loads what other programs changed (merged with your unsaved changes); while <code>edit.lock</code> is in the folder it does not write.</p>
-    <table class="keys">
-      <tr><th>Space + drag, middle or right drag, H</th><td>Pan</td></tr>
-      <tr><th>Wheel, two-finger scroll, pinch</th><td>Zoom around the cursor</td></tr>
-      <tr><th>F · + · −</th><td>Fit the map · zoom in · zoom out (also the buttons at the bottom left of the map)</td></tr>
-      <tr><th>B · E · S · G · U · I</th><td>Brush · Eraser · Smooth · Fill · Shapes (U again: the next shape) · Pick value</td></tr>
-      <tr><th>L · W</th><td>Select area (L again: rectangle, ellipse, lasso, polygon) · Magic wand</td></tr>
-      <tr><th>V · A · N · M</th><td>Select/move objects and notes · Add object · Note · Measure</td></tr>
-      <tr><th>Shapes</th><td>Shift: square / circle, 15° steps · Alt: from the center · double-click or Enter: finish a polygon or line · Backspace: remove the last point</td></tr>
-      <tr><th>Select area</th><td>Shift+drag adds, Alt+drag subtracts · drag inside the area: move its cells (Ctrl/Cmd: a copy) · brushes, shapes and fills paint only inside the area</td></tr>
-      <tr><th>Ctrl+C · Ctrl+X · Ctrl+V</th><td>Copy · cut · paste: selected objects or notes, or the cells of the selected area</td></tr>
-      <tr><th>Ctrl+A · Ctrl+Shift+A · Ctrl+I</th><td>Select all (objects, or the whole area) · deselect the area · invert the area</td></tr>
-      <tr><th>Enter · Esc</th><td>Apply · cancel moved or pasted cells (Esc also deselects)</td></tr>
-      <tr><th>[ ]</th><td>Brush size</td></tr>
-      <tr><th>Shift+[ ]</th><td>Brush strength</td></tr>
-      <tr><th>1–9, 0</th><td>Class to paint (categories) · value 10–90%, 100% (masks)</td></tr>
-      <tr><th>Alt+click</th><td>Pick the value under the cursor (target height for Flatten)</td></tr>
-      <tr><th>Shift+click</th><td>Brush: a straight line from the last stroke</td></tr>
-      <tr><th>Delete · Ctrl+D</th><td>Delete selected objects or clear the selected area · duplicate selected objects</td></tr>
-      <tr><th>Arrows · Shift+arrows</th><td>Move selected objects by 0.25 m · 2 m</td></tr>
-      <tr><th>R · Shift+R</th><td>Rotate selected objects by 15° · −15° (moved cells: a quarter turn)</td></tr>
-      <tr><th>Ctrl+Enter · Esc</th><td>In a note: save · cancel</td></tr>
-      <tr><th>Ctrl+A · Esc</th><td>Select all objects of the layer · clear the selection</td></tr>
-      <tr><th>Ctrl+Z · Ctrl+Shift+Z</th><td>Undo · redo</td></tr>
-      <tr><th>Ctrl+S · Ctrl+O</th><td>Save now · open another project folder</td></tr>
-      <tr><th>Shift+G</th><td>Grid</td></tr>
-      <tr><th>P</th><td>3D preview of the terrain (the height layer with the visible layers over it)</td></tr>
-      <tr><th>Panels</th><td>Drag a tab to dock the panel at another side or into another group · Shift+drag a tab to float it · drag the borders to resize · right-click a tab: maximize, float, reset the layout</td></tr>
-      <tr><th>Bottom bar</th><td>Right-click: which layers it shows (the selected one, visible categories and the height by default)</td></tr>
-    </table>
+    <p class="muted intro">Every layer shows one kind of thing on the map seen from above. Pick a tool in the bar at the top, select a layer in the Layers panel, then paint or place objects on it; the Tool Options panel has the settings of the tool, Properties those of the layer (tabs: Layer, Selection, Objects). Click the eye to hide a layer, Alt+click to show only it (Alt+click again to bring the others back). The eye buttons above the list show / hide every layer (hiding keeps the map render; Alt+click hides it too). Visibility, opacity and locks are kept in this browser. The project is a folder (<code>metadata.json</code> and one file per layer): with Autosave on, every change is written there a moment later. The tool checks the folder every second and loads what other programs changed (merged with your unsaved changes); while <code>edit.lock</code> is in the folder it does not write.</p>
+    <div class="help-cols">
+      <table class="keys">
+        <tr><th>Space + drag, middle or right drag, H</th><td>Pan</td></tr>
+        <tr><th>Wheel, two-finger scroll, pinch</th><td>Zoom around the cursor</td></tr>
+        <tr><th>F · + · −</th><td>Fit the map · zoom in · zoom out (also the buttons at the bottom left of the map)</td></tr>
+        <tr><th>B · E · S · G · U · I</th><td>Brush · Eraser · Smooth · Fill · Shapes (U again: the next shape) · Pick value</td></tr>
+        <tr><th>L · W</th><td>Select area (L again: rectangle, ellipse, lasso, polygon) · Magic wand</td></tr>
+        <tr><th>V · A · N · M</th><td>Select/move objects and notes · Add object · Note · Measure</td></tr>
+        <tr><th>Shapes</th><td>Shift: square / circle, 15° steps · Alt: from the center · double-click or Enter: finish a polygon or line · Backspace: remove the last point</td></tr>
+        <tr><th>[ ]</th><td>Brush size</td></tr>
+        <tr><th>Shift+[ ]</th><td>Brush strength</td></tr>
+        <tr><th>1–9, 0</th><td>Class to paint (categories) · value 10–90%, 100% (masks)</td></tr>
+        <tr><th>Alt+click</th><td>Pick the value under the cursor (target height for Flatten)</td></tr>
+        <tr><th>Shift+click</th><td>Brush: a straight line from the last stroke</td></tr>
+        <tr><th>Shift+G</th><td>Grid</td></tr>
+        <tr><th>P</th><td>3D preview of the terrain (the height layer with the visible layers over it)</td></tr>
+      </table>
+      <table class="keys">
+        <tr><th>Select area</th><td>Shift+drag adds, Alt+drag subtracts · drag inside the area: move its cells (Ctrl/Cmd: a copy) · brushes, shapes and fills paint only inside the area</td></tr>
+        <tr><th>Ctrl+C · Ctrl+X · Ctrl+V</th><td>Copy · cut · paste: selected objects or notes, or the cells of the selected area</td></tr>
+        <tr><th>Ctrl+A · Ctrl+Shift+A · Ctrl+I</th><td>Select all (objects, or the whole area) · deselect the area · invert the area</td></tr>
+        <tr><th>Enter · Esc</th><td>Apply · cancel moved or pasted cells (Esc also deselects)</td></tr>
+        <tr><th>Delete · Ctrl+D</th><td>Delete selected objects or clear the selected area · duplicate selected objects</td></tr>
+        <tr><th>Arrows · Shift+arrows</th><td>Move selected objects by 0.25 m · 2 m</td></tr>
+        <tr><th>R · Shift+R</th><td>Rotate selected objects by 15° · −15° (moved cells: a quarter turn)</td></tr>
+        <tr><th>Ctrl+Enter · Esc</th><td>In a note: save · cancel</td></tr>
+        <tr><th>Ctrl+A · Esc</th><td>Select all objects of the layer · clear the selection</td></tr>
+        <tr><th>Ctrl+Z · Ctrl+Shift+Z</th><td>Undo · redo</td></tr>
+        <tr><th>Ctrl+S · Ctrl+O</th><td>Save now · open another project folder</td></tr>
+        <tr><th>Panels</th><td>Drag a tab to dock the panel at another side or into another group · Shift+drag a tab to float it · drag the borders to resize · right-click a tab: maximize, float, reset the layout</td></tr>
+        <tr><th>Bottom bar</th><td>Right-click: which layers it shows (the selected one, visible categories and the height by default)</td></tr>
+      </table>
+    </div>
     <p class="muted small">GameWorld Painter · MIT license · source, docs and the project format: <a href="https://github.com/aleserb/game-world-painter" target="_blank" rel="noopener">github.com/aleserb/game-world-painter</a></p>
     <div class="buttons"><button value="ok" class="primary">Close</button></div>
   </form>

@@ -323,3 +323,9 @@ dialog .buttons { display: flex; justify-content: flex-end; gap: 6px; margin-top
 table.keys { border-collapse: collapse; }
 table.keys th { text-align: left; font-weight: 500; color: #9cc8ff; padding: 2.25px 12px 2.25px 0; white-space: nowrap; }
 table.keys td { padding: 2.25px 0; }
+#help-dlg { width: min(900px, 94vw); max-width: none; }
+#help-dlg .intro { columns: 2; column-gap: 24px; margin-top: 0; }
+#help-dlg .help-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+#help-dlg .help-cols table.keys td { vertical-align: top; }
+#help-dlg .help-cols table.keys th { vertical-align: top; }
+@media (max-width: 760px) { #help-dlg .intro { columns: 1; } #help-dlg .help-cols { grid-template-columns: 1fr; } }
