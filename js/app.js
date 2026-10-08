@@ -2414,7 +2414,7 @@ function renderLayers() {
         el('span', { class: 'count' }, String(members.length)),
         el('span', { class: 'spacer' }),
         el('button', {
-          class: 'icon-btn' + (anyVisible ? ' on' : ' off'), title: 'Show / hide the group',
+          class: 'icon-btn vis' + (anyVisible ? ' on' : ' off'), title: 'Show / hide the group',
           onclick: ev => { ev.stopPropagation(); members.forEach(l => { l.meta.visible = !anyVisible; }); viewChanged(); },
         }, ME.icon(anyVisible ? 'eye' : 'eye-off'))));
     }
@@ -2428,14 +2428,14 @@ function renderLayers() {
       ondblclick: () => renameLayer(L, nameEl),
     },
     el('button', {
-      class: 'icon-btn' + (m.visible ? ' on' : ' off'), title: 'Show / hide (Alt+click: show only this one)',
+      class: 'icon-btn vis' + (m.visible ? ' on' : ' off'), title: 'Show / hide (Alt+click: show only this one)',
       onclick: ev => { ev.stopPropagation(); toggleVisible(L, ev.altKey); },
     }, ME.icon(m.visible ? 'eye' : 'eye-off')),
     thumbOf(L),
     nameEl,
     el('span', { class: 'type' }, L.hasItems ? String(L.items.length) : ''),
     el('button', {
-      class: 'icon-btn' + (m.locked ? ' on' : ' off'), title: m.locked ? 'Locked: click to unlock' : 'Lock',
+      class: 'icon-btn lock' + (m.locked ? ' on' : ' off'), title: m.locked ? 'Locked: click to unlock' : 'Lock',
       onclick: ev => { ev.stopPropagation(); m.locked = !m.locked; viewChanged(); renderOptions(); renderProps(); },
     }, ME.icon(m.locked ? 'lock' : 'lock-open')));
     r.addEventListener('dragstart', ev => { dragRow = L; ev.dataTransfer.effectAllowed = 'move'; });

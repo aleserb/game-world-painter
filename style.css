@@ -185,6 +185,11 @@ a { color: #9cc8ff; }
 .layer-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .layer-row.hidden-layer .name, .layer-row.hidden-layer .thumb { opacity: 0.45; }
 .layer-row .type { font-size: 7.5px; color: var(--muted); }
+/* the eye and the lock appear on hover; a hidden or a locked layer keeps showing it, so its state is seen */
+.layer-row .vis.on, .layer-row .lock.off, .group-row .vis.on { visibility: hidden; }
+.layer-row:hover .vis, .layer-row:hover .lock, .group-row:hover .vis { visibility: visible; }
+.layer-row .lock.on:not(:hover) { color: var(--muted); }
+@media (hover: none) { .layer-row .vis.on, .layer-row .lock.off, .group-row .vis.on { visibility: visible; } }
 .thumb {
   width: 25.5px; height: 18px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.12); background: #2f2f34;
   display: block; image-rendering: auto;
