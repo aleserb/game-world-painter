@@ -1,0 +1,6 @@
+{"items": [
+{"id":1,"kind":"wooden_chest","x":-50,"z":-55,"yaw":0,"zone":"woods"},
+{"id":2,"kind":"iron_chest","x":58,"z":-46,"yaw":0,"zone":"mountains"},
+{"id":3,"kind":"wooden_chest","x":-60,"z":18,"yaw":0,"zone":"woods"},
+{"id":4,"kind":"treasure","x":70,"z":60,"yaw":0,"zone":"coast"}
+]}

@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+vendor/*.min.js -diff linguist-vendored
+vendor/lucide-icons.js linguist-vendored

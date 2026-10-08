@@ -1,0 +1,10 @@
+{"items": [
+{"id":1,"kind":"wolf","x":-60,"z":-40,"yaw":0,"zone":"woods","props":{"pack_size":3}},
+{"id":2,"kind":"wolf","x":-30,"z":-70,"yaw":0,"zone":"woods","props":{"pack_size":4}},
+{"id":3,"kind":"boar","x":-80,"z":30,"yaw":0,"zone":"woods","props":{"pack_size":2}},
+{"id":4,"kind":"bandit","x":50,"z":-30,"yaw":0,"zone":"mountains","props":{"pack_size":3}},
+{"id":5,"kind":"bandit","x":62,"z":-58,"yaw":0,"zone":"mountains","props":{"pack_size":2}},
+{"id":6,"kind":"crab","x":40,"z":75,"yaw":0,"zone":"coast","props":{"pack_size":4}},
+{"id":7,"kind":"crab","x":-70,"z":70,"yaw":0,"zone":"coast","props":{"pack_size":3}},
+{"id":8,"kind":"boar","x":30,"z":-5,"yaw":0,"zone":"woods","props":{"pack_size":2}}
+]}

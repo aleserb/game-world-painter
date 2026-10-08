@@ -1,0 +1,13 @@
+{"version":3,"title":"Demo island","created":"examples/make_demo.py","world":{"x0":-128.0,"z0":-128.0,"width":256.0,"height":256.0,"cols":512,"rows":512},"layers":[
+{"id":"height","name":"Terrain height","group":"Terrain","type":"height","visible":true,"opacity":1,"locked":false,"encoding":{"offset":-20,"step":0.001},"contour":1,"note":"Meters above the sea.","file":"layers/height.png"},
+{"id":"ground","name":"Ground","group":"Terrain","type":"category","visible":true,"opacity":0.85,"locked":false,"classes":[{"name":"none","color":null},{"name":"sand","color":"#d8c48a"},{"name":"grass","color":"#6f9a45"},{"name":"dirt","color":"#8a6a45"},{"name":"rock","color":"#7a7672"}],"note":"The ground texture.","file":"layers/ground.png"},
+{"id":"zones","name":"Zones","group":"Terrain","type":"category","visible":false,"opacity":0.35,"locked":false,"classes":[{"name":"none","color":null},{"name":"village","color":"#e0a050"},{"name":"woods","color":"#4f9a4a"},{"name":"mountains","color":"#9a8a7a"},{"name":"coast","color":"#4a8ad0"}],"note":"Areas of the world; new objects take the zone under them.","file":"layers/zones.png"},
+{"id":"water","name":"Water","group":"Terrain","type":"mask","visible":true,"opacity":0.6,"locked":false,"color":"#3d7fb5","file":"layers/water.png"},
+{"id":"roads","name":"Roads & paths","group":"Terrain","type":"mask","visible":true,"opacity":0.8,"locked":false,"color":"#c8a46a","file":"layers/roads.png"},
+{"id":"bushes","name":"Bushes","group":"Greenery","type":"mask","visible":true,"opacity":0.75,"locked":false,"color":"#5fa63c","file":"layers/bushes.png"},
+{"id":"trees","name":"Trees","group":"Greenery","type":"mask","visible":true,"opacity":0.8,"locked":false,"color":"#2c6a2a","note":"Tree crowns: density 0-100 %.","file":"layers/trees.png"},
+{"id":"buildings","name":"Buildings","group":"Structures","type":"objects","visible":true,"opacity":1,"locked":false,"color":"#e07a4a","style":"footprint","label":"{kind}","file":"layers/buildings.json"},
+{"id":"chests","name":"Chests","group":"Gameplay","type":"objects","visible":true,"opacity":1,"locked":false,"color":"#ffc83c","style":"marker","marker":"square","size":2,"label":"{kind}","file":"layers/chests.json"},
+{"id":"enemies","name":"Enemies","group":"Gameplay","type":"objects","visible":true,"opacity":1,"locked":false,"color":"#ff4a4a","style":"marker","marker":"circle","size":2.4,"label":"{kind} ×{pack_size}","note":"kind = the enemy type, pack_size = how many are in the pack.","file":"layers/enemies.json"},
+{"id":"notes","name":"Notes","group":"Notes","type":"notes","visible":true,"opacity":1,"locked":false,"color":"#ffd25a","note":"Notes pinned to the map (Note tool, N).","file":"layers/notes.json"}
+]}

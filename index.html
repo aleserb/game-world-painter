@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GameWorld Painter</title>
+<meta name="description" content="Plan a game world on layers seen from above: terrain height, ground, vegetation, objects and notes. Runs in the browser, saves to a folder of PNG and JSON files.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%23f0a35e%22/%3E%3Cpath d=%22M3 12l3-6 3 4 2-3 2 5z%22 fill=%22%231d1a26%22/%3E%3C/svg%3E">
+</head>
+<body>
+<header>
+  <span class="muted" id="project-title"></span>
+  <span class="vsep"></span>
+  <button id="new" class="hbtn" data-icon="file-plus" title="Make a new map in an empty folder">New Map</button>
+  <button id="open" class="hbtn" data-icon="folder-open" title="Open a project folder, one with metadata.json (Ctrl+O)">Open Folder</button>
+  <span class="vsep"></span>
+  <button id="undo" class="hbtn icon-only" data-icon="undo-2" title="Undo (Ctrl+Z)"></button>
+  <button id="redo" class="hbtn icon-only" data-icon="redo-2" title="Redo (Ctrl+Shift+Z)"></button>
+  <span class="vsep"></span>
+  <button id="save" class="hbtn" data-icon="save" title="Write the changes into the folder now (Ctrl+S)">Save</button>
+  <label class="switch-label" title="Write every change into the folder by itself, a moment after it is made"><input type="checkbox" id="autosave" class="switch"> Autosave</label>
+  <span id="save-state" class="muted"></span>
+  <span class="spacer"></span>
+  <label class="switch-label" title="3D preview of the terrain (P)"><span data-icon="box"></span> 3D <input type="checkbox" id="btn3d" class="switch"></label>
+  <button id="size" class="hbtn" title="The bounds and the cell size of the map">Map size: <b id="size-label">—</b></button>
+  <label class="switch-label" title="Grid (Shift+G)"><span data-icon="grid-3x3"></span> Grid <input type="checkbox" id="grid" class="switch"></label>
+  <button id="help" class="hbtn" data-icon="circle-help" title="Shortcuts (?)">Help</button>
+</header>
+<nav id="tools"></nav>
+
+<div id="main">
+  <div id="dock"></div>
+</div>
+<!-- the panels of the dock (js/dock.js moves them into it): drag a tab to dock it elsewhere, Shift+drag to float -->
+<div id="panels" hidden>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="banner" hidden></div>
+    <div id="toast" hidden></div>
+    <div id="map-zoom" class="map-ctl">
+      <button id="zoom-in" class="ibtn" data-icon="plus" title="Zoom in (+, wheel)"></button>
+      <button id="zoom-out" class="ibtn" data-icon="minus" title="Zoom out (−, wheel)"></button>
+      <button id="zoom-fit" class="ibtn" data-icon="maximize" title="Fit the map (F)"></button>
+    </div>
+    <div id="note-editor" hidden>
+      <textarea rows="4" placeholder="Note… (Ctrl+Enter saves, Esc cancels)"></textarea>
+      <div class="note-bar">
+        <span class="colors"></span>
+        <span class="spacer"></span>
+        <button class="delete danger" title="Delete the note">Delete</button>
+        <button class="done primary" title="Save the note (Ctrl+Enter)">Done</button>
+      </div>
+    </div>
+  </div>
+  <section id="options" class="panel-body"></section>
+  <section id="layers" class="panel-body">
+    <div class="panel-tools">
+      <button id="layer-add" class="ibtn" data-icon="plus" title="New layer (above the selected one)"></button>
+      <button id="layer-dup" class="ibtn" data-icon="copy" title="Duplicate the selected layer"></button>
+      <button id="layer-del" class="ibtn" data-icon="trash-2" title="Delete the selected layer"></button>
+      <span class="vsep"></span>
+      <button id="layer-up" class="ibtn" data-icon="arrow-up" title="Move the selected layer up"></button>
+      <button id="layer-down" class="ibtn" data-icon="arrow-down" title="Move the selected layer down"></button>
+      <span class="spacer"></span>
+      <button id="layers-show" class="ibtn" data-icon="eye" title="Show all layers"></button>
+      <button id="layers-hide" class="ibtn" data-icon="eye-off" title="Hide all layers except the map render (Alt+click: hide it too)"></button>
+    </div>
+    <div id="layer-list"></div>
+  </section>
+  <section id="props" class="panel-body"></section>
+  <div id="view3d">
+    <div class="v3-head">
+      <b>3D</b>
+      <select class="v3-tex" title="What covers the ground">
+        <option value="map">Visible layers</option>
+        <option value="height">Height colors</option>
+      </select>
+      <label class="check" title="Height scale">↕ <input type="range" class="v3-exag" min="0.5" max="5" step="0.1" value="1"> <span class="v3-exag-v">1.0×</span></label>
+      <span class="spacer"></span>
+      <button data-preset="overview" title="The whole map (double-click)">Overview</button>
+      <button data-preset="view" title="What the 2D view shows">2D view</button>
+      <button data-preset="top" title="Straight from above">Top</button>
+      <button data-preset="close" title="A close view (45°, 20 m away, FOV 40°) at the middle of the 2D view">Close-up</button>
+      <button class="v3-max ibtn" data-icon="maximize" title="Maximize / restore the panel"></button>
+      <button class="v3-close ibtn" data-icon="x" title="Close (P)"></button>
+    </div>
+    <div class="v3-note" hidden></div>
+    <canvas></canvas>
+    <div class="v3-msg"></div>
+  </div>
+</div>
+<footer id="statusbar">
+  <div id="status"></div>
+  <button id="zoom" class="hbtn" data-icon="zoom-in" title="Zoom (pixels per meter): click for presets"><span id="zoom-label"></span> <span data-icon="chevron-down" class="small-icon flip"></span></button>
+  <span id="target"></span>
+</footer>
+
+<dialog id="new-layer">
+  <form method="dialog">
+    <h3>New layer</h3>
+    <label>Name <input name="name" required value="New layer" autocomplete="off"></label>
+    <label>Type
+      <select name="type">
+        <option value="mask">Mask: paint where something is, with density (0–100%)</option>
+        <option value="category">Categories: paint classes (biomes, areas, ground types)</option>
+        <option value="objects">Objects: place points with kind, rotation and properties</option>
+        <option value="notes">Notes: text notes pinned to the map</option>
+        <option value="height">Height: raise, lower, flatten, smooth (meters)</option>
+        <option value="image">Picture: a sketch or reference stretched over the map</option>
+      </select>
+    </label>
+    <label class="for-color">Color <input name="color" type="color" value="#e05a9a"></label>
+    <label class="for-image" hidden>Picture <input name="file" type="file" accept="image/png,image/jpeg,image/webp"></label>
+    <label>Group <span class="group-field"></span></label>
+    <label>Description <textarea name="note" rows="2" placeholder="What this layer shows, how to paint it…"></textarea></label>
+    <p class="muted small">The layer goes above the selected layer.</p>
+    <div class="buttons">
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button value="ok" class="primary">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="map-dlg">
+  <form method="dialog">
+    <h3>Map size</h3>
+    <label class="for-new">Title <input name="title" value="New map" autocomplete="off"></label>
+    <div class="presets"></div>
+    <label>Center x, m <input name="cx" type="number" step="0.5"></label>
+    <label>Center z, m <input name="cz" type="number" step="0.5"></label>
+    <label>Width (x), m <input name="width" type="number" min="4" step="1"></label>
+    <label>Height (z), m <input name="height" type="number" min="4" step="1"></label>
+    <label>Cell
+      <select name="cell">
+        <option value="0.25">0.25 m</option>
+        <option value="0.4">0.4 m</option>
+        <option value="0.5">0.5 m</option>
+        <option value="1">1 m</option>
+      </select>
+    </label>
+    <label class="for-new">Layers
+      <select name="layers">
+        <option value="same">The layers of the open map, empty</option>
+        <option value="basic">A basic set: terrain, greenery, objects, notes</option>
+        <option value="notes">Only notes</option>
+      </select>
+    </label>
+    <p class="info small"></p>
+    <p class="muted small for-size">The map is a rectangle of square cells. Painted cells outside the new bounds are cut off, new cells are empty (height 0 m); objects, notes and pictures keep their place in meters. The layer files are written again. This cannot be undone.</p>
+    <p class="muted small for-new">The new map goes into an empty folder (the folder dialog can make one); the open map is saved first. Folder… opens either map later.</p>
+    <div class="buttons">
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button type="button" class="primary ok">Apply</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="help-dlg">
+  <form method="dialog">
+    <h3>GameWorld Painter</h3>
+    <p class="muted">Every layer shows one kind of thing on the map seen from above. Pick a tool in the bar at the top, select a layer in the Layers panel, then paint or place objects on it; the Tool Options panel has the settings of the tool, Properties those of the layer (tabs: Layer, Selection, Objects). Click the eye to hide a layer, Alt+click to show only it (Alt+click again to bring the others back). The eye buttons above the list show / hide every layer (hiding keeps the map render; Alt+click hides it too). Visibility, opacity and locks are kept in this browser. The project is a folder (<code>metadata.json</code> and one file per layer): with Autosave on, every change is written there a moment later. The tool checks the folder every second and loads what other programs changed (merged with your unsaved changes); while <code>edit.lock</code> is in the folder it does not write.</p>
+    <table class="keys">
+      <tr><th>Space + drag, middle or right drag, H</th><td>Pan</td></tr>
+      <tr><th>Wheel, two-finger scroll, pinch</th><td>Zoom around the cursor</td></tr>
+      <tr><th>F · + · −</th><td>Fit the map · zoom in · zoom out (also the buttons at the bottom left of the map)</td></tr>
+      <tr><th>B · E · S · G · U · I</th><td>Brush · Eraser · Smooth · Fill · Shapes (U again: the next shape) · Pick value</td></tr>
+      <tr><th>L · W</th><td>Select area (L again: rectangle, ellipse, lasso, polygon) · Magic wand</td></tr>
+      <tr><th>V · A · N · M</th><td>Select/move objects and notes · Add object · Note · Measure</td></tr>
+      <tr><th>Shapes</th><td>Shift: square / circle, 15° steps · Alt: from the center · double-click or Enter: finish a polygon or line · Backspace: remove the last point</td></tr>
+      <tr><th>Select area</th><td>Shift+drag adds, Alt+drag subtracts · drag inside the area: move its cells (Ctrl/Cmd: a copy) · brushes, shapes and fills paint only inside the area</td></tr>
+      <tr><th>Ctrl+C · Ctrl+X · Ctrl+V</th><td>Copy · cut · paste: selected objects or notes, or the cells of the selected area</td></tr>
+      <tr><th>Ctrl+A · Ctrl+Shift+A · Ctrl+I</th><td>Select all (objects, or the whole area) · deselect the area · invert the area</td></tr>
+      <tr><th>Enter · Esc</th><td>Apply · cancel moved or pasted cells (Esc also deselects)</td></tr>
+      <tr><th>[ ]</th><td>Brush size</td></tr>
+      <tr><th>Shift+[ ]</th><td>Brush strength</td></tr>
+      <tr><th>1–9, 0</th><td>Class to paint (categories) · value 10–90%, 100% (masks)</td></tr>
+      <tr><th>Alt+click</th><td>Pick the value under the cursor (target height for Flatten)</td></tr>
+      <tr><th>Shift+click</th><td>Brush: a straight line from the last stroke</td></tr>
+      <tr><th>Delete · Ctrl+D</th><td>Delete selected objects or clear the selected area · duplicate selected objects</td></tr>
+      <tr><th>Arrows · Shift+arrows</th><td>Move selected objects by 0.25 m · 2 m</td></tr>
+      <tr><th>R · Shift+R</th><td>Rotate selected objects by 15° · −15° (moved cells: a quarter turn)</td></tr>
+      <tr><th>Ctrl+Enter · Esc</th><td>In a note: save · cancel</td></tr>
+      <tr><th>Ctrl+A · Esc</th><td>Select all objects of the layer · clear the selection</td></tr>
+      <tr><th>Ctrl+Z · Ctrl+Shift+Z</th><td>Undo · redo</td></tr>
+      <tr><th>Ctrl+S · Ctrl+O</th><td>Save now · open another project folder</td></tr>
+      <tr><th>Shift+G</th><td>Grid</td></tr>
+      <tr><th>P</th><td>3D preview of the terrain (the height layer with the visible layers over it)</td></tr>
+      <tr><th>Panels</th><td>Drag a tab to dock the panel at another side or into another group · Shift+drag a tab to float it · drag the borders to resize · right-click a tab: maximize, float, reset the layout</td></tr>
+      <tr><th>Bottom bar</th><td>Right-click: which layers it shows (the selected one, visible categories and the height by default)</td></tr>
+    </table>
+    <p class="muted small">GameWorld Painter · MIT license · source, docs and the project format: <a href="https://github.com/aleserb/game-world-painter" target="_blank" rel="noopener">github.com/aleserb/game-world-painter</a></p>
+    <div class="buttons"><button value="ok" class="primary">Close</button></div>
+  </form>
+</dialog>
+
+<datalist id="kinds"></datalist>
+<!-- classic scripts: index.html opens from the disk, where module scripts are blocked -->
+<script src="vendor/dockview-core.min.js"></script>
+<script src="vendor/lucide-icons.js"></script>
+<script src="js/png.js"></script>
+<script src="js/store.js"></script>
+<script src="js/folder.js"></script>
+<script src="js/layers.js"></script>
+<script src="js/raster.js"></script>
+<script src="js/view3d.js"></script>
+<script src="js/dock.js"></script>
+<script src="js/view.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

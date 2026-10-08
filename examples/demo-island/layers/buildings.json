@@ -1,0 +1,12 @@
+{"items": [
+{"id":1,"kind":"tavern","x":-14,"z":14,"yaw":15,"w":12,"d":9,"ox":0,"oz":0,"zone":"village"},
+{"id":2,"kind":"house","x":-2,"z":10,"yaw":-5,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":3,"kind":"house","x":12,"z":14,"yaw":20,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":4,"kind":"house","x":-16,"z":30,"yaw":80,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":5,"kind":"house","x":16,"z":32,"yaw":95,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":6,"kind":"house","x":-6,"z":42,"yaw":10,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":7,"kind":"house","x":8,"z":44,"yaw":-12,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":8,"kind":"house","x":24,"z":22,"yaw":40,"w":8,"d":6,"ox":0,"oz":0,"zone":"village"},
+{"id":9,"kind":"watchtower","x":42,"z":-40,"yaw":0,"w":4,"d":4,"ox":0,"oz":0,"zone":"mountains"},
+{"id":10,"kind":"pier","x":92,"z":54,"yaw":70,"w":3,"d":14,"ox":0,"oz":0,"zone":"coast"}
+]}

@@ -1,0 +1,5 @@
+{"items": [
+{"id":1,"x":0,"z":25,"text":"Village square: the player starts here.","date":"2026-10-08"},
+{"id":2,"x":52,"z":-44,"text":"Bandit camp. A second way up the mountain?","date":"2026-10-08","color":"#ff9eb0"},
+{"id":3,"x":-55,"z":5,"text":"Lake: fishing spot and a hidden cave under the cliff","date":"2026-10-08","color":"#8fd0ff"}
+]}
