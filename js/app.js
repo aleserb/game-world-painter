@@ -73,16 +73,20 @@ function toast(text, ms = 2600) {
 /** Asks in an in-app dialog (not the browser's confirm()); resolves true when the user agrees. */
 function ask(text, { title = 'Are you sure?', ok = 'OK', danger = false } = {}) {
   const dlg = $('#confirm-dlg'), btn = dlg.querySelector('.ok');
+  ask.answer?.(false); // a new question cancels the one still open
   dlg.querySelector('h3').textContent = title;
   dlg.querySelector('p').textContent = text;
   btn.textContent = ok;
   btn.classList.toggle('danger', danger);
   btn.classList.toggle('primary', !danger);
-  dlg.returnValue = '';
   dlg.showModal();
   btn.focus();
-  return new Promise(resolve => dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true }));
+  // answered by the buttons and Esc themselves: the 'close' event comes later and could reach the next question
+  return new Promise(resolve => { ask.answer = yes => { ask.answer = null; dlg.close(); resolve(yes); }; });
 }
+$('#confirm-dlg .ok').onclick = () => ask.answer?.(true);
+$('#confirm-dlg [value=cancel]').onclick = () => ask.answer?.(false);
+$('#confirm-dlg').addEventListener('cancel', () => ask.answer?.(false));
 
 let renderQueued = false;
 function requestRender() {
@@ -711,9 +715,13 @@ function render() {
   view3d.cursorTick();
 }
 
+/** The grid spacing in meters: the smallest of 1, 2, 5, 10... m that is at least 36 UI pixels wide. */
+function gridStep() {
+  return [1, 2, 5, 10, 20, 50, 100].find(s => s * view.scale >= 36) || 100;
+}
+
 function drawGrid() {
-  const w = world(), steps = [1, 2, 5, 10, 20, 50, 100];
-  const step = steps.find(s => s * view.scale >= 36) || 100;
+  const w = world(), step = gridStep();
   const [sx0, sy0] = view.toScreen(w.x0, w.z0), [sx1, sy1] = view.toScreen(w.x0 + w.width, w.z0 + w.height);
   ctx.font = '10px system-ui';
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
@@ -737,17 +745,27 @@ function drawGrid() {
   }
 }
 
+/** The scale bar; with the grid on it is a whole number of grid cells, with a tick between the cells. */
 function drawScaleBar() {
-  const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500];
-  const m = steps.find(st => st * view.scale >= 90) || 500, len = m * view.scale, x = view.w - len - 22, y = view.h - 18;
+  let m, cells = 2, label;
+  if (S.grid) {
+    const g = gridStep(), n = Math.max(1, Math.ceil(90 / (g * view.scale)));
+    m = n * g; cells = n <= 12 ? n : 1; label = `${m} m · grid ${g} m`;
+  } else {
+    m = [1, 2, 5, 10, 20, 50, 100, 200, 500].find(st => st * view.scale >= 90) || 500; label = `${m} m`;
+  }
+  ctx.font = '11px system-ui';
+  const len = m * view.scale, box = Math.max(len, ctx.measureText(label).width), x = view.w - 22 - (len + box) / 2, y = view.h - 18;
   ctx.fillStyle = 'rgba(20,20,22,0.72)';
-  ctx.fillRect(x - 10, y - 18, len + 20, 28);
+  ctx.fillRect(x + len / 2 - box / 2 - 10, y - 18, box + 20, 28);
   ctx.strokeStyle = '#f2f2f4';
   ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.lineTo(x + len, y - 5); ctx.moveTo(x + len / 2, y); ctx.lineTo(x + len / 2, y - 3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x, y); ctx.lineTo(x + len, y); ctx.lineTo(x + len, y - 5);
+  for (let i = 1; i < cells; i++) { ctx.moveTo(x + len * i / cells, y); ctx.lineTo(x + len * i / cells, y - 3); }
+  ctx.stroke();
   ctx.fillStyle = '#f2f2f4';
-  ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`${m} m`, x + len / 2, y - 6);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(label, x + len / 2, y - 6);
   // north is up
   const nx = view.w - 30, ny = 22;
   ctx.fillStyle = 'rgba(20,20,22,0.72)';

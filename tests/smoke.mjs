@@ -165,7 +165,8 @@ try {
   await ev(`document.querySelector('#confirm-dlg .ok').click(); true`);
   const gone = await until(`!gwp.layerById('bushes')`, 3000);
   await ev(`gwp.undo(); true`);
-  check(asked && kept && gone && await ev(`!!gwp.layerById('bushes')`), 'delete a layer: asks in the page, Cancel keeps it, undo brings it back', asked || '');
+  const back = await ev(`!!gwp.layerById('bushes')`);
+  check(asked && kept && gone && back, 'delete a layer: asks in the page, Cancel keeps it, undo brings it back', `${asked} kept ${kept}, deleted ${gone}, back ${back}`);
 
   // a wider map
   await ev(`gwp.resizeMap({ x0: -160, z0: -128, width: 320, height: 256, cols: 640, rows: 512 }); true`);
