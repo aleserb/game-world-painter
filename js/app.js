@@ -42,6 +42,7 @@ const S = {
   sel: { layer: null, ids: new Set() },
   layerSel: new Set(), // ids of the selected layers (Shift / Ctrl+click in the Layers panel); has the active one
   layersFocus: false, // the last click was in the Layers panel: Space shows / hides the selected layers
+  groupSel: null, // the selected group (its header was clicked): ▲▼ move the whole group
   grid: false,
   collapsed: new Set(),
   cursor: null,
@@ -2059,6 +2060,11 @@ window.addEventListener('keydown', e => {
     if (S.float) { e.preventDefault(); deleteFloat(); return; }
     if (S.area && S.active?.raster) { e.preventDefault(); clearArea(); return; }
   }
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && S.layersFocus && S.active) { // in the Layers panel
+    e.preventDefault();
+    stepLayer(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey);
+    return;
+  }
   if (e.key.startsWith('Arrow')) {
     const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0, dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
     if (S.sel.ids.size) {
@@ -2156,8 +2162,7 @@ function setActive(layer, render = true) {
   if (S.float && S.float.layer !== layer) commitFloat();
   if (S.draft && S.draft.kind === 'shape' && S.draft.layer !== layer) S.draft = null;
   S.active = layer || null;
-  if (!layer) S.layerSel = new Set();
-  else if (!S.layerSel.has(layer.id)) S.layerSel = new Set([layer.id]);
+  if (!layer || !S.layerSel.has(layer.id)) { S.layerSel = new Set(layer ? [layer.id] : []); S.groupSel = null; }
   if (layer && !toolFits(S.tool, layer) && EDIT_TOOLS.includes(S.tool)) S.tool = defaultTool(layer);
   if (S.sel.layer && S.sel.layer !== layer) S.sel = { layer: null, ids: new Set() };
   if (layer?.type === 'category' && S.brush.cls >= layer.meta.classes.length) S.brush.cls = Math.min(1, layer.meta.classes.length - 1);
@@ -2441,8 +2446,10 @@ function renderLayers() {
       prevGroup = g;
       const members = S.layers.filter(l => (l.meta.group || 'Other') === g);
       const anyVisible = members.some(l => l.meta.visible);
-      list.append(el('div', { class: 'group-row', onclick: () => { S.collapsed.has(g) ? S.collapsed.delete(g) : S.collapsed.add(g); saveUi(); renderLayers(); } },
-        ME.icon(S.collapsed.has(g) ? 'chevron-right' : 'chevron-down', 'small-icon'),
+      const fold = ev => { ev?.stopPropagation(); S.collapsed.has(g) ? S.collapsed.delete(g) : S.collapsed.add(g); saveUi(); renderLayers(); };
+      list.append(el('div', { class: 'group-row' + (S.groupSel === g ? ' selected' : ''), title: 'Click: select the group (▲▼ move it, Space shows / hides it); double-click or the arrow: fold',
+        onclick: () => selectGroup(g), ondblclick: () => fold() },
+        el('span', { class: 'fold', onclick: fold, ondblclick: ev => ev.stopPropagation() }, ME.icon(S.collapsed.has(g) ? 'chevron-right' : 'chevron-down', 'small-icon')),
         ME.icon('folder', 'folder'),
         el('span', {}, g),
         el('span', { class: 'count' }, String(members.length)),
@@ -2460,6 +2467,8 @@ function renderLayers() {
       title: `${TYPE_NAMES[m.type]}${m.note ? ': ' + m.note : ''}`,
       'data-id': L.id,
       onclick: ev => clickLayer(L, ev),
+      // on a Mac Ctrl+click is a right click: the browser sends contextmenu and no click
+      oncontextmenu: ev => { if (ev.ctrlKey && !ev.metaKey) { ev.preventDefault(); ctrlMenuAt = performance.now(); clickLayer(L, ev); } },
       ondblclick: () => renameLayer(L, nameEl),
     },
     el('button', {
@@ -2475,7 +2484,7 @@ function renderLayers() {
     }, ME.icon(m.locked ? 'lock' : 'lock-open')));
     r.addEventListener('dragstart', ev => { dragRow = L; ev.dataTransfer.effectAllowed = 'move'; });
     r.addEventListener('dragover', ev => {
-      if (!dragRow || dragRow === L) return;
+      if (!dragRow || dragRow === L || groupOf(dragRow) !== groupOf(L)) return; // layers move inside their group only
       ev.preventDefault();
       const above = ev.offsetY < r.offsetHeight / 2;
       r.classList.toggle('drop-above', above);
@@ -2484,7 +2493,8 @@ function renderLayers() {
     r.addEventListener('dragleave', () => r.classList.remove('drop-above', 'drop-below'));
     r.addEventListener('drop', ev => {
       ev.preventDefault();
-      if (!dragRow || dragRow === L) return;
+      r.classList.remove('drop-above', 'drop-below');
+      if (!dragRow || dragRow === L || groupOf(dragRow) !== groupOf(L)) return;
       const above = ev.offsetY < r.offsetHeight / 2;
       moveLayerTo(dragRow, L, above);
       dragRow = null;
@@ -2531,18 +2541,15 @@ function renameLayer(L, nameEl) {
   input.addEventListener('blur', () => done(true));
 }
 
+const groupOf = l => l.meta.group || 'Other';
+
+/** Drag and drop in the Layers panel: next to a layer of the same group. */
 function moveLayerTo(L, target, above) {
   const list = S.layers.filter(l => l !== L);
   let k = list.indexOf(target);
   if (above) k += 1; // the list is bottom -> top, the panel top -> bottom
   list.splice(k, 0, L);
-  const groupBefore = L.meta.group;
-  const groupAfter = target.meta.group;
   setLayers(list, L, 'move layer');
-  if (groupBefore !== groupAfter) {
-    L.meta.group = groupAfter;
-    history.undo[history.undo.length - 1] = combine(history.undo[history.undo.length - 1], () => { L.meta.group = groupBefore; }, () => { L.meta.group = groupAfter; });
-  }
   renderAll();
 }
 
@@ -2550,19 +2557,75 @@ function combine(entry, undoExtra, redoExtra) {
   return { label: entry.label, undo: () => { undoExtra(); entry.undo(); }, redo: () => { entry.redo(); redoExtra(); } };
 }
 
+/** ▲▼: the selected layers move one step inside their group (another group: change Group in the properties); a
+ *  selected group moves past the group next to it. dir: +1 up, -1 down. */
 function moveLayer(dir) {
-  const L = S.active;
-  if (!L) return;
-  const k = S.layers.indexOf(L), j = k + dir;
-  if (j < 0 || j >= S.layers.length) return;
-  const list = [...S.layers];
-  [list[k], list[j]] = [list[j], list[k]];
-  const groupBefore = L.meta.group, groupAfter = list[k].meta.group;
-  setLayers(list, L, 'move layer');
-  if (groupBefore !== groupAfter && list[j + dir]?.meta.group !== groupBefore) {
-    L.meta.group = groupAfter;
-    history.undo[history.undo.length - 1] = combine(history.undo[history.undo.length - 1], () => { L.meta.group = groupBefore; }, () => { L.meta.group = groupAfter; });
+  if (S.groupSel) { moveGroup(S.groupSel, dir); return; }
+  const sel = selectedLayers();
+  if (!sel.length) return;
+  const list = [...S.layers], chosen = new Set(sel);
+  let moved = 0;
+  // the one nearest to where they go first, so a block of selected layers moves together
+  for (const L of [...sel].sort((a, b) => (list.indexOf(b) - list.indexOf(a)) * dir)) {
+    const k = list.indexOf(L), N = list[k + dir];
+    if (!N || groupOf(N) !== groupOf(L) || chosen.has(N)) continue;
+    list[k] = N;
+    list[k + dir] = L;
+    moved++;
   }
+  if (!moved) {
+    const L = sel[0];
+    toast(`${sel.length > 1 ? 'They are' : `“${L.meta.name}” is`} at the ${dir > 0 ? 'top' : 'bottom'} of the group “${groupOf(L)}”. To move a layer to another group, change its Group in Properties.`, 3500);
+    return;
+  }
+  setLayers(list, S.active, sel.length > 1 ? 'move layers' : 'move layer');
+  renderAll();
+}
+
+/** Runs of consecutive layers of one group, bottom to top: the group headers of the panel. */
+function groupRuns(list = S.layers) {
+  const runs = [];
+  for (const l of list) {
+    const last = runs.at(-1);
+    if (last && last.g === groupOf(l)) last.items.push(l); else runs.push({ g: groupOf(l), items: [l] });
+  }
+  return runs;
+}
+
+/** Moves a whole group past the next group up (dir +1) or down (-1); its layers come together if they were apart. */
+function moveGroup(g, dir) {
+  const runs = groupRuns(), mine = runs.filter(r => r.g === g);
+  if (!mine.length) return;
+  const ref = runs.indexOf(dir > 0 ? mine.at(-1) : mine[0]);
+  const others = runs.filter(r => r.g !== g), p = runs.slice(0, ref).filter(r => r.g !== g).length;
+  const order = [...others.slice(0, p), { g, items: mine.flatMap(r => r.items) }, ...others.slice(p)];
+  const k = p + (dir > 0 ? 1 : -1);
+  if (k < 0 || k >= order.length) { toast(`The group “${g}” is at the ${dir > 0 ? 'top' : 'bottom'}`, 2000); return; }
+  [order[p], order[k]] = [order[k], order[p]];
+  setLayers(order.flatMap(r => r.items), S.active, `move group ${g}`);
+  renderAll();
+}
+
+/** Selects a group: all its layers (Space shows / hides them, Delete layer deletes them) and ▲▼ move the group. */
+function selectGroup(g) {
+  const members = S.layers.filter(l => groupOf(l) === g);
+  if (!members.length) return;
+  S.layerSel = new Set(members.map(l => l.id));
+  S.groupSel = g;
+  layerAnchor = null;
+  setActive(S.layerSel.has(S.active?.id) ? S.active : members.at(-1));
+}
+
+/** Changes the group of a layer: it goes to the top of that group (of its old one, for a new group). One undo step. */
+function setLayerGroup(L, g) {
+  const before = L.meta.group, old = groupOf(L);
+  const list = S.layers.filter(l => l !== L);
+  const anchor = list.filter(l => groupOf(l) === g).at(-1) || list.filter(l => groupOf(l) === old).at(-1);
+  list.splice(anchor ? list.indexOf(anchor) + 1 : list.length, 0, L);
+  const set = v => { if (v === undefined) delete L.meta.group; else L.meta.group = v; };
+  set(g);
+  setLayers(list, L, 'layer group');
+  history.undo[history.undo.length - 1] = combine(history.undo.at(-1), () => set(before), () => set(g));
   renderAll();
 }
 
@@ -2576,9 +2639,13 @@ function newLayerMeta(name, type, color, group, note) {
   return meta;
 }
 
+/** A new layer goes above the selected one when it is of the same group, else on top of its group (a new group: above
+ *  the group of the selected layer), so groups stay together. */
 function insertLayer(layer, label) {
-  const list = [...S.layers];
-  const k = S.active ? list.indexOf(S.active) + 1 : list.length;
+  const list = [...S.layers], g = groupOf(layer);
+  const at = S.active && groupOf(S.active) === g ? S.active
+    : list.filter(l => groupOf(l) === g).at(-1) || (S.active && list.filter(l => groupOf(l) === groupOf(S.active)).at(-1));
+  const k = at ? list.indexOf(at) + 1 : list.length;
   list.splice(k, 0, layer);
   setLayers(list, layer, label);
   renderAll();
@@ -2680,11 +2747,17 @@ function selectedLayers() {
   return list.length ? list : S.active ? [S.active] : [];
 }
 
+let ctrlMenuAt = 0;
+
 function clickLayer(L, ev) {
+  if (ev.type === 'click' && ev.ctrlKey && performance.now() - ctrlMenuAt < 600) return; // done on contextmenu
   const add = ev.ctrlKey || ev.metaKey;
-  if (ev.shiftKey && layerAnchor && layerById(layerAnchor)) {
+  S.groupSel = null;
+  // the range starts at the last clicked layer, else at the active one (after a reload, or a click on the map)
+  const anchor = layerAnchor && S.layerSel.has(layerAnchor) ? layerAnchor : S.active?.id;
+  if (ev.shiftKey && anchor) {
     const order = [...document.querySelectorAll('#layer-list .layer-row')].map(r => r.dataset.id);
-    const a = order.indexOf(layerAnchor), b = order.indexOf(L.id);
+    const a = order.indexOf(anchor), b = order.indexOf(L.id);
     if (a >= 0 && b >= 0) {
       const range = order.slice(Math.min(a, b), Math.max(a, b) + 1);
       S.layerSel = new Set(add ? [...S.layerSel, ...range] : range);
@@ -2708,6 +2781,27 @@ function clickLayer(L, ev) {
   setActive(L);
 }
 
+/** ↑↓ in the Layers panel: selects the layer row above / below (Shift: extends the selection to it). d: -1 up, +1 down. */
+function stepLayer(d, extend) {
+  const order = [...document.querySelectorAll('#layer-list .layer-row')].map(r => r.dataset.id);
+  if (!order.length) return;
+  const k = order.indexOf(S.active?.id), j = k < 0 ? 0 : Math.max(0, Math.min(order.length - 1, k + d));
+  const L = layerById(order[j]);
+  if (!L) return;
+  S.groupSel = null;
+  if (extend) {
+    const anchor = layerAnchor && S.layerSel.has(layerAnchor) && order.includes(layerAnchor) ? layerAnchor : S.active.id;
+    const a = Math.max(0, order.indexOf(anchor));
+    layerAnchor = order[a];
+    S.layerSel = new Set(order.slice(Math.min(a, j), Math.max(a, j) + 1));
+  } else {
+    layerAnchor = L.id;
+    S.layerSel = new Set([L.id]);
+  }
+  setActive(L);
+  document.querySelector(`#layer-list .layer-row[data-id="${CSS.escape(L.id)}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
 /** Space in the Layers panel: shows the selected layers, or hides them when any is visible. */
 function toggleSelectedVisible() {
   const list = selectedLayers();
@@ -2724,8 +2818,8 @@ async function deleteLayer() {
   if (!list.length) return;
   const one = list.length === 1;
   const names = list.map(l => `“${l.meta.name}”`).join(', ');
-  if (!await ask(one ? 'Undo brings it back.' : `${names}. Undo brings them back.`,
-    { title: one ? `Delete the layer ${names}?` : `Delete ${list.length} layers?`, ok: 'Delete', danger: true })) return;
+  const what = S.groupSel ? `the group “${S.groupSel}” (${list.length} layer${one ? '' : 's'})` : one ? `the layer ${names}` : `${list.length} layers`;
+  if (!await ask(one ? 'Undo brings it back.' : `${names}. Undo brings them back.`, { title: `Delete ${what}?`, ok: 'Delete', danger: true })) return;
   if (!list.every(l => S.layers.includes(l))) return;
   const rest = S.layers.filter(l => !list.includes(l));
   const k = Math.min(...list.map(l => S.layers.indexOf(l)));
@@ -2820,7 +2914,8 @@ function renderObjectList(box) {
 function renderLayerProps(box) {
   const L = S.active;
   if (!L) { box.append(el('div', { class: 'hint' }, 'Select a layer.')); return; }
-  if (S.layerSel.size > 1) box.append(el('div', { class: 'hint' }, `${S.layerSel.size} layers selected; below: the settings of “${L.meta.name}”. Space shows / hides the selected layers, Delete layer deletes them.`));
+  if (S.groupSel) box.append(el('div', { class: 'hint' }, `The group “${S.groupSel}” is selected (${S.layerSel.size} layers): ▲▼ move it, Space shows / hides it, Delete layer deletes its layers. Below: the settings of “${L.meta.name}”.`));
+  else if (S.layerSel.size > 1) box.append(el('div', { class: 'hint' }, `${S.layerSel.size} layers selected; below: the settings of “${L.meta.name}”. ▲▼ move them inside their groups, Space shows / hides them, Delete layer deletes them.`));
   const m = L.meta;
   const name = el('input', { value: m.name, onchange: () => setMeta(L, 'name', name.value.trim() || m.name, 'rename layer') });
   box.append(row('Name', name));
@@ -2840,7 +2935,7 @@ function renderLayerProps(box) {
   }
   const current = m.group || 'Other';
   box.append(row('Group', groupPicker(current, g => {
-    if (g !== current) setMeta(L, 'group', g, 'layer group');
+    if (g !== current) setLayerGroup(L, g);
     renderLayers();
     renderProps();
   })));

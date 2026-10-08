@@ -174,6 +174,10 @@ a { color: #9cc8ff; }
 }
 .group-row .count { color: var(--muted); font-weight: 400; font-size: 8.25px; }
 .group-row .folder { color: #e3b341; }
+.group-row:hover { background: var(--hover); }
+.group-row.selected { background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(59, 142, 234, 0.45); }
+.group-row .fold { display: inline-flex; border-radius: 3px; }
+.group-row .fold:hover { background: rgba(255, 255, 255, 0.12); }
 .layer-row {
   display: grid; grid-template-columns: 19.5px 25.5px 1fr auto 19.5px; align-items: center; gap: 4.5px; padding: 2.25px 3px 2.25px 13.5px;
   border-radius: 4.5px; cursor: pointer; user-select: none;

@@ -59,8 +59,8 @@
       <button id="layer-dup" class="ibtn" data-icon="copy" title="Duplicate the selected layer"></button>
       <button id="layer-del" class="ibtn" data-icon="trash-2" title="Delete the selected layers"></button>
       <span class="vsep"></span>
-      <button id="layer-up" class="ibtn" data-icon="arrow-up" title="Move the selected layer up"></button>
-      <button id="layer-down" class="ibtn" data-icon="arrow-down" title="Move the selected layer down"></button>
+      <button id="layer-up" class="ibtn" data-icon="arrow-up" title="Move the selected layers up inside their group (a selected group: past the group above)"></button>
+      <button id="layer-down" class="ibtn" data-icon="arrow-down" title="Move the selected layers down inside their group (a selected group: past the group below)"></button>
       <span class="spacer"></span>
       <button id="layers-show" class="ibtn" data-icon="eye" title="Show all layers"></button>
       <button id="layers-hide" class="ibtn" data-icon="eye-off" title="Hide all layers except the map render (Alt+click: hide it too)"></button>
@@ -192,6 +192,8 @@
         <tr><th>Arrows · Shift+arrows</th><td>Move selected objects by 0.25 m · 2 m (in other units: about as much)</td></tr>
         <tr><th>R · Shift+R</th><td>Rotate selected objects by 15° · −15° (moved cells: a quarter turn)</td></tr>
         <tr><th>Layers: Ctrl/Cmd+click · Shift+click · Space</th><td>Add or remove a layer from the selection · select the rows between · show / hide the selected layers</td></tr>
+      <tr><th>Layers: ↑ ↓ · Shift+↑ ↓</th><td>After a click in the Layers panel: select the layer above / below · extend the selection</td></tr>
+      <tr><th>Layers: ▲▼ · group header</th><td>Move the selected layers inside their group · click a group header to select the group (▲▼ move it; the arrow or a double-click folds it)</td></tr>
       <tr><th>Ctrl+Enter · Esc</th><td>In a note: save · cancel</td></tr>
         <tr><th>Ctrl+A · Esc</th><td>Select all objects of the layer · clear the selection</td></tr>
         <tr><th>Ctrl+Z · Ctrl+Shift+Z</th><td>Undo · redo</td></tr>

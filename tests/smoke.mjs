@@ -192,6 +192,37 @@ try {
   check(range === 'bushes,roads,trees,water' && three === 'roads,trees,water' && hidden && shown && title === 'Delete 3 layers?' && gone3 && back3,
     'select several layers: Shift / Ctrl+click, Space hides and shows them, delete and undo', `${range} | ${three} | hidden ${hidden}, shown ${shown}, ${title}, deleted ${gone3}, back ${back3}`);
 
+  // Shift+click with no click before (the range starts at the active layer); Ctrl+click on a Mac (a contextmenu event)
+  await ev(`gwp.setActive(gwp.layerById('chests')); true`);
+  await clickRow('Buildings', 8);
+  const fromActive = await selIds();
+  await ev(`(r => r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ctrlKey: true })))([...document.querySelectorAll('#layer-list .layer-row')].find(r => r.dataset.id === 'notes')); true`);
+  const macCtrl = await selIds();
+  // arrows in the Layers panel
+  const key = async (k, code, vk, modifiers = 0) => { for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk, modifiers }); };
+  await clickRow('Trees');
+  await key('ArrowDown', 'ArrowDown', 40);
+  const down = await ev(`gwp.S.active.id`);
+  await key('ArrowUp', 'ArrowUp', 38, 8);
+  const ext = await selIds();
+  check(fromActive === 'buildings,chests' && macCtrl === 'buildings,chests,notes' && down === 'bushes' && ext === 'bushes,trees',
+    'Shift+click from the active layer, Ctrl+click on a Mac, ↑↓ select layers', `${fromActive} | ${macCtrl} | ${down} | ${ext}`);
+
+  // ▲▼ move layers inside their group only; a selected group moves past the next group
+  const ids = () => ev(`gwp.S.layers.map(l => l.id).join(',')`);
+  const groups = () => ev(`[...document.querySelectorAll('#layer-list .group-row')].map(r => r.querySelector('.count').previousElementSibling.textContent).join(',')`);
+  await clickRow('Trees');
+  const order0 = await ids();
+  await ev(`document.getElementById('layer-up').click(); true`); // Trees is the top of Greenery: stays
+  const stay = (await ids()) === order0;
+  await ev(`document.getElementById('layer-down').click(); document.getElementById('layer-down').click(); true`); // below Bushes, then stays
+  const trees = await ev(`(L => [gwp.S.layers.indexOf(L) < gwp.S.layers.indexOf(gwp.layerById('bushes')), L.meta.group])(gwp.layerById('trees'))`);
+  const groups0 = await groups();
+  await ev(`[...document.querySelectorAll('#layer-list .group-row')].find(r => r.textContent.startsWith('Greenery')).click(); document.getElementById('layer-up').click(); true`);
+  const groups1 = await groups();
+  check(stay && trees[0] && trees[1] === 'Greenery' && groups0 === 'Notes,Gameplay,Structures,Greenery,Terrain' && groups1 === 'Notes,Gameplay,Greenery,Structures,Terrain',
+    'move layers inside their group, move a group', `${groups0} -> ${groups1}`);
+
   // a wider map
   await ev(`gwp.resizeMap({ x0: -160, z0: -128, width: 320, height: 256, cols: 640, rows: 512 }); true`);
   check(await ev(`gwp.layerById('trees').cols === 640 && gwp.layerById('trees').rows === 512`), 'resize the map to 320 x 256 m');
