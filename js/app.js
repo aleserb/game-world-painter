@@ -70,6 +70,20 @@ function toast(text, ms = 2600) {
   toast.timer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
+/** Asks in an in-app dialog (not the browser's confirm()); resolves true when the user agrees. */
+function ask(text, { title = 'Are you sure?', ok = 'OK', danger = false } = {}) {
+  const dlg = $('#confirm-dlg'), btn = dlg.querySelector('.ok');
+  dlg.querySelector('h3').textContent = title;
+  dlg.querySelector('p').textContent = text;
+  btn.textContent = ok;
+  btn.classList.toggle('danger', danger);
+  btn.classList.toggle('primary', !danger);
+  dlg.returnValue = '';
+  dlg.showModal();
+  btn.focus();
+  return new Promise(resolve => dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true }));
+}
+
 let renderQueued = false;
 function requestRender() {
   if (renderQueued) return;
@@ -329,7 +343,7 @@ async function connectFolder(f) {
 }
 
 async function pickFolder() {
-  if (anyDirty() && !confirm('Open another folder? The unsaved changes are lost.')) return;
+  if (anyDirty() && !await ask('The unsaved changes are lost.', { title: 'Open another folder?', ok: 'Open another folder', danger: true })) return;
   let f;
   try {
     f = await ME.Folder.pick();
@@ -2603,10 +2617,11 @@ async function duplicateLayer() {
   insertLayer(layer, `duplicate ${src.meta.name}`);
 }
 
-function deleteLayer() {
+async function deleteLayer() {
   const L = S.active;
   if (!L) return;
-  if (!confirm(`Delete the layer “${L.meta.name}”? (Undo brings it back.)`)) return;
+  if (!await ask('Undo brings it back.', { title: `Delete the layer “${L.meta.name}”?`, ok: 'Delete', danger: true })) return;
+  if (!S.layers.includes(L)) return;
   const list = S.layers.filter(l => l !== L);
   const k = S.layers.indexOf(L);
   setLayers(list, list[Math.min(k, list.length - 1)] || null, `delete layer ${L.meta.name}`);
@@ -2784,9 +2799,10 @@ function renderLayerProps(box) {
   }
 }
 
-function clearLayer(L) {
+async function clearLayer(L) {
   if (!canEdit(L)) return;
-  if (!confirm(`Clear everything on “${L.meta.name}”?`)) return;
+  if (!await ask('Everything on it is removed; undo brings it back.', { title: `Clear the layer “${L.meta.name}”?`, ok: 'Clear', danger: true })) return;
+  if (!S.layers.includes(L)) return;
   if (L.hasItems) { editObjects(L, `clear ${L.meta.name}`, () => { L.items = []; }); select(L, []); }
   else {
     const before = L.data.slice();
@@ -2835,8 +2851,10 @@ function hslToHex(hsl) {
   return c.fillStyle;
 }
 
-function deleteClass(L, k) {
-  if (!confirm(`Delete the class “${L.meta.classes[k].name}”? Its cells become “none”.`)) return;
+async function deleteClass(L, k) {
+  const cls = L.meta.classes[k];
+  if (!await ask('Its cells become “none”.', { title: `Delete the class “${cls.name}”?`, ok: 'Delete', danger: true })) return;
+  if (!S.layers.includes(L) || L.meta.classes[k] !== cls) return;
   const before = L.data.slice(), cb = structuredClone(L.meta.classes);
   for (let i = 0; i < L.data.length; i++) { const v = L.data[i]; if (v === k) L.data[i] = 0; else if (v > k) L.data[i] = v - 1; }
   const after = L.data.slice(), ca = cb.filter((_, j) => j !== k);

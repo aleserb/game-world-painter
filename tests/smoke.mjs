@@ -155,6 +155,18 @@ try {
   const bar = await ev(`[...document.querySelectorAll('#tools .tbtn')].map(t => t.textContent.trim())`);
   check(bar[0] === 'Select' && bar[1] === 'Pan' && bar.includes('Brush') && !bar.includes('Add Object'), 'Select comes first, before Pan, on any layer', bar.slice(0, 4).join(', '));
 
+  // deleting a layer asks in the page (not the browser's confirm())
+  await ev(`gwp.setActive(gwp.layerById('bushes')); document.getElementById('layer-del').click(); true`);
+  const asked = await until(`document.getElementById('confirm-dlg').open && document.querySelector('#confirm-dlg h3').textContent`, 3000);
+  await ev(`document.querySelector('#confirm-dlg button[value=cancel]').click(); true`);
+  const kept = await until(`!document.getElementById('confirm-dlg').open && !!gwp.layerById('bushes')`, 3000);
+  await ev(`document.getElementById('layer-del').click(); true`);
+  await until(`document.getElementById('confirm-dlg').open`, 3000);
+  await ev(`document.querySelector('#confirm-dlg .ok').click(); true`);
+  const gone = await until(`!gwp.layerById('bushes')`, 3000);
+  await ev(`gwp.undo(); true`);
+  check(asked && kept && gone && await ev(`!!gwp.layerById('bushes')`), 'delete a layer: asks in the page, Cancel keeps it, undo brings it back', asked || '');
+
   // a wider map
   await ev(`gwp.resizeMap({ x0: -160, z0: -128, width: 320, height: 256, cols: 640, rows: 512 }); true`);
   check(await ev(`gwp.layerById('trees').cols === 640 && gwp.layerById('trees').rows === 512`), 'resize the map to 320 x 256 m');

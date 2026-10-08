@@ -21,6 +21,10 @@ button.primary { background: var(--accent); color: var(--accent-text); font-weig
 button.primary:hover { background: #5aa2f0; }
 button.on { background: var(--accent); color: var(--accent-text); }
 button.danger:hover { background: var(--danger); }
+#confirm-dlg { width: 330px; }
+#confirm-dlg p { margin: 0; }
+#confirm-dlg .ok.danger { background: var(--danger); color: #fff; font-weight: 600; }
+#confirm-dlg .ok.danger:hover { filter: brightness(1.12); }
 input, select, textarea {
   background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 4.5px; padding: 3px 5.25px;
   font: inherit; min-width: 0;
@@ -239,11 +243,11 @@ dialog p[hidden] { display: none; }
 
 /* notes */
 #note-editor {
-  position: absolute; width: 202.5px; background: var(--panel-2); border: 1px solid var(--accent); border-radius: 6px; padding: 6px;
+  position: absolute; width: 240px; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--accent); border-radius: 6px; padding: 6px;
   box-shadow: 0 4.5px 16.5px rgba(0, 0, 0, 0.55); z-index: 2;
 }
 #note-editor textarea { min-height: 58.5px; }
-.note-bar { display: flex; gap: 3.75px; align-items: center; margin-top: 4.5px; }
+.note-bar { display: flex; flex-wrap: wrap; gap: 3.75px; align-items: center; margin-top: 4.5px; }
 .note-bar button { padding: 3px 6.75px; }
 .note-bar .colors { display: flex; gap: 3px; }
 button.dot { width: 13.5px; height: 13.5px; padding: 0; border-radius: 50%; border: 2px solid rgba(20, 20, 24, 0.85); }
