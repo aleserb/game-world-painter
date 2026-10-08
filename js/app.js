@@ -11,6 +11,7 @@ const ctx = canvas.getContext('2d');
 
 const RASTER = ['mask', 'category', 'height'];
 const TOOLS = [
+  { id: 'select', key: 'v', name: 'Select', icon: '↖', types: null },
   { id: 'pan', key: 'h', name: 'Pan', icon: '✥', types: null },
   { id: 'brush', key: 'b', name: 'Brush', icon: '✎', types: RASTER, gap: true },
   { id: 'eraser', key: 'e', name: 'Eraser', icon: '⌫', types: ['mask', 'category'] },
@@ -19,12 +20,11 @@ const TOOLS = [
   { id: 'shape', key: 'u', name: 'Shapes', icon: '⬠', types: RASTER },
   { id: 'picker', key: 'i', name: 'Pick value', icon: '⊙', types: RASTER },
   { id: 'area', key: 'l', name: 'Select area', icon: '⬚', types: RASTER, gap: true },
-  { id: 'select', key: 'v', name: 'Select / move objects', icon: '↖', types: ['objects', 'notes'], gap: true },
-  { id: 'add', key: 'a', name: 'Add object', icon: '✚', types: ['objects'] },
+  { id: 'add', key: 'a', name: 'Add object', icon: '✚', types: ['objects'], gap: true },
   { id: 'note', key: 'n', name: 'Note', icon: '🗒', types: null },
   { id: 'measure', key: 'm', name: 'Measure', icon: '⟷', types: null, gap: true },
 ];
-const EDIT_TOOLS = ['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'area', 'select', 'add'];
+const EDIT_TOOLS = ['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'area', 'add'];
 const MARKERS = ['circle', 'square', 'diamond', 'triangle', 'cross'];
 const STYLES = { marker: 'Marker', footprint: 'Footprint', link: 'Two ends (A–B)' };
 
@@ -1889,11 +1889,14 @@ function endDrag() {
     else deselectArea();
   } else if (d.mode === 'float') renderOptions();
   else if (d.mode === 'box') {
-    const L = S.active?.hasItems ? S.active : null;
     const [x0, z0, x1, z1] = S.box;
+    const inBox = it => it.x >= x0 && it.x <= x1 && it.z >= z0 && it.z <= z1;
+    // the selected objects layer, else the top visible unlocked one with something in the box
+    const L = S.active?.hasItems ? S.active : objectLayersTopDown().find(l => l.items.some(inBox));
     if (L && L.meta.visible && (x1 - x0 > 0.1 || z1 - z0 > 0.1)) {
+      if (L !== S.active) setActive(L);
       const ids = new Set(d.add && S.sel.layer === L ? S.sel.ids : []);
-      for (const it of L.items) if (it.x >= x0 && it.x <= x1 && it.z >= z0 && it.z <= z1) ids.add(it.id);
+      for (const it of L.items) if (inBox(it)) ids.add(it.id);
       select(L, ids);
     }
     S.box = null;
@@ -2097,7 +2100,7 @@ function setActive(layer, render = true) {
 
 // The tool bar at the top: every shape and every way to select has its own button.
 const TOOLBAR = [
-  [{ tool: 'pan', label: 'Pan', icon: 'hand' }],
+  [{ tool: 'select', label: 'Select', icon: 'mouse-pointer-2' }, { tool: 'pan', label: 'Pan', icon: 'hand' }],
   [{ tool: 'brush', label: 'Brush', icon: 'brush' }, { tool: 'eraser', label: 'Eraser', icon: 'eraser' },
     { tool: 'smooth', label: 'Smooth', icon: 'waves' }, { tool: 'fill', label: 'Fill', icon: 'paint-bucket' }],
   [{ tool: 'shape', shape: 'rect', label: 'Rect', icon: 'square' }, { tool: 'shape', shape: 'ellipse', label: 'Ellipse', icon: 'circle' },
@@ -2107,12 +2110,12 @@ const TOOLBAR = [
   [{ tool: 'area', area: 'rect', label: 'Rect', icon: 'square-dashed' }, { tool: 'area', area: 'ellipse', label: 'Ellipse', icon: 'circle-dashed' },
     { tool: 'area', area: 'free', label: 'Lasso', icon: 'lasso' }, { tool: 'area', area: 'polygon', label: 'Polygon', icon: 'pentagon', dashed: true },
     { tool: 'area', area: 'wand', label: 'Wand', icon: 'wand-sparkles' }],
-  [{ tool: 'select', label: 'Move', icon: 'move' }, { tool: 'add', label: 'Add Object', icon: 'map-pin-plus' }],
+  [{ tool: 'add', label: 'Add Object', icon: 'map-pin-plus' }],
   [{ tool: 'note', label: 'Note', icon: 'sticky-note' }],
   [{ tool: 'measure', label: 'Measure', icon: 'ruler' }],
 ];
 
-/** The tool bar shows the tools for the selected layer only (painting tools for rasters, Move / Add Object for objects). */
+/** The tool bar shows the tools for the selected layer only (painting tools for rasters, Add Object for objects); Select, Pan, Note and Measure always. */
 function renderTools() {
   const nav = $('#tools');
   nav.innerHTML = '';

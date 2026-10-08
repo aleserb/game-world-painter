@@ -151,6 +151,9 @@ try {
   // the tool bar follows the layer
   check(await ev(`(b => b.some(t => t.includes('Add Object')) && !b.some(t => t.includes('Brush')))([...document.querySelectorAll('#tools .tbtn')].map(t => t.textContent))`),
     'the tool bar shows the tools of the layer');
+  await ev(`gwp.setActive(gwp.layerById('trees')); true`);
+  const bar = await ev(`[...document.querySelectorAll('#tools .tbtn')].map(t => t.textContent.trim())`);
+  check(bar[0] === 'Select' && bar[1] === 'Pan' && bar.includes('Brush') && !bar.includes('Add Object'), 'Select comes first, before Pan, on any layer', bar.slice(0, 4).join(', '));
 
   // a wider map
   await ev(`gwp.resizeMap({ x0: -160, z0: -128, width: 320, height: 256, cols: 640, rows: 512 }); true`);

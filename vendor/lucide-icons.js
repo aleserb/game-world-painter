@@ -1,4 +1,4 @@
-// Lucide icons (https://lucide.dev), lucide-static 1.53.0, only the icons the Map Painter uses.
+// Lucide icons (https://lucide.dev), lucide-static 1.53.0, only the icons GameWorld Painter uses.
 // ISC License
 // 
 // Copyright (c) 2026 Lucide Icons and Contributors
