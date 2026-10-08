@@ -69,6 +69,15 @@ const ev = async expr => {
   if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text);
   return r.result?.result?.value;
 };
+/** Polls a page expression (or an async function) until it is truthy or the time is up; returns its last value. */
+const until = async (expr, ms = 15000) => {
+  let v;
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(200)) {
+    try { v = typeof expr === 'function' ? await expr() : await ev(expr); } catch (e) { v = undefined; }
+    if (v) break;
+  }
+  return v;
+};
 const mouse = (type, x, y) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
 const opfsWrite = (p, bytes) => ev(`(async () => { const parts = ${JSON.stringify(p)}.split('/'); let d = await navigator.storage.getDirectory();
   for (const q of parts.slice(0, -1)) d = await d.getDirectoryHandle(q, { create: true });
@@ -84,14 +93,13 @@ try {
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 950, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: URL_APP });
-  await sleep(1500);
-  check(await ev(`!document.getElementById('banner').hidden && document.getElementById('banner').textContent.includes('Open folder')`), 'the welcome banner');
+  check(await until(`!!window.gwp && !document.getElementById('banner').hidden && document.getElementById('banner').textContent.includes('Open folder')`), 'the welcome banner');
 
   // the demo project, in the private file system of the page
   const files = ['metadata.json', ...fs.readdirSync(path.join(DEMO, 'layers')).map(f => 'layers/' + f)];
   for (const f of files) await opfsWrite('demo/' + f, fs.readFileSync(path.join(DEMO, f)));
   await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo'); await gwp.connect(d); })()`);
-  await sleep(800);
+  await until(`gwp.S.layers.length === 11`, 5000);
   const layers = await ev(`gwp.S.layers.length`);
   check(layers === 11, 'the demo opens', `${layers} layers, ${await ev(`document.title`)}`);
 
@@ -112,8 +120,7 @@ try {
   await drag([[-20, 40], [0, 40], [20, 40]]);
   const after = await sum('trees');
   check(after > before, 'a brush stroke paints', `${before} -> ${after}`);
-  await sleep(2500);
-  check((await opfsStamp('demo/layers/trees.png')) !== stamp0, 'autosave writes layers/trees.png', await ev(`document.getElementById('save-state').textContent`));
+  check(await until(async () => (await opfsStamp('demo/layers/trees.png')) !== stamp0), 'autosave writes layers/trees.png', await ev(`document.getElementById('save-state').textContent`));
   await ev(`gwp.undo(); true`);
   check((await sum('trees')) === before, 'undo');
 
@@ -151,8 +158,7 @@ try {
 
   // 3D
   await ev(`gwp.dock.isOpen('view3d') || document.getElementById('btn3d').click(); true`);
-  await sleep(1500);
-  check(await ev(`gwp.view3d.isOpen && (!!gwp.view3d.gl || !!gwp.view3d.soft)`), '3D preview', await ev(`gwp.view3d.soft ? 'software view' : 'WebGL2'`));
+  check(await until(`gwp.view3d.isOpen && (!!gwp.view3d.gl || !!gwp.view3d.soft)`), '3D preview', await ev(`gwp.view3d.soft ? 'software view' : 'WebGL2'`));
 
   check(errors.length === 0, 'no errors in the page', errors.slice(0, 3).join(' | '));
 } catch (err) {
