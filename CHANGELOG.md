@@ -11,6 +11,9 @@
   Regions: zones, classes, mask ranges, heights, slopes, distances to layers, shapes, all / any / not. Every change
   is one undo step; read-only mode and confirmation of deletions.
 - The agent skill (`skills/game-world-painter`): the workflow, regions and recipes for common requests.
+- `open_map` and `create_map`: the agent opens a map by its folder path or makes a new one; the app reads and writes
+  it through the local MCP server (only folders the agent opened, only for the connected tab), and the server opens the
+  app in the browser (`?mcp=<port>&map=<path>`) when none is connected. Such a map opens again after a reload.
 - Review mode for AI agents (AI Agent → Settings): the agent's changes become proposals on the map — Accept, Change…
   (with a comment for the agent) or Reject, with Before / After; held (not saved, locked) until decided. Tools
   `begin_proposal`, `submit_proposal`, `wait_for_review`.

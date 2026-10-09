@@ -100,7 +100,8 @@ region, items with distances, open or hidden spots, walkability, routes, spacing
 (scatter objects naturally, paint masks and categories with soft edges and noise, raise, flatten, smooth and slope
 the terrain, add, change and delete items, create layers), with regions such as *the selected area*, *the village
 zone*, *8 m around the roads*, and their intersections. `get_project_path` tells it where the map's files are on
-disk, for work with scripts and other tools.
+disk, for work with scripts and other tools; `open_map` and `create_map` open a map by its path or make a new one —
+the server opens the app in the browser if needed, and the app reads and writes that folder through the server.
 
 1. Add the server to your agent once, e.g. `claude mcp add --scope user game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs`
    (`node mcp/server.mjs setup` prints the command for each agent; details in [mcp/README.md](mcp/README.md)).

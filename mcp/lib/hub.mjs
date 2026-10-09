@@ -6,8 +6,12 @@
 //   POST /relay/call   another server process (started by another agent) forwards a tool call
 //   POST /relay/hello  ... and says it is alive (its agent shows in the app)
 //   POST /mcp          Streamable HTTP MCP for clients configured by URL
+//   /fs/stat, /fs/read, /fs/write, /fs/remove   the files of a map the agent opened or created (open_map, create_map),
+//                      for the connected app only (X-GWP-Session) and only inside the folders granted by the agent
 // Browsers may reach it only from allowed origins (the app); the Host header must be a loopback name (no DNS rebinding).
 import http from 'node:http';
+import path from 'node:path';
+import { promises as fsp } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { McpEndpoint, RpcError, ERR, error as rpcError, SUPPORTED_VERSIONS, MODERN_VERSIONS } from './protocol.mjs';
 
@@ -28,7 +32,12 @@ export class Hub {
     this.stateless = null;
     this.total = 0;
     this.appWaiters = [];
+    this.grants = new Set(); // map folders the app may read and write through /fs (granted by the agent's tools)
+    this.appUrl = null; // where the app was opened last (to open it again for the agent)
   }
+
+  /** Lets the app use a map folder through /fs (only the agent's open_map and create_map grant). */
+  grant(root) { this.grants.add(path.resolve(root)); }
 
   listen() {
     return new Promise((resolve, reject) => {
@@ -93,8 +102,9 @@ export class Hub {
     this.cors(req, res);
     if (req.method === 'OPTIONS') { // CORS preflight from the app (and Private Network Access)
       res.writeHead(204, {
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'content-type, mcp-protocol-version, mcp-method, mcp-name, mcp-session-id',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'content-type, mcp-protocol-version, mcp-method, mcp-name, mcp-session-id, x-gwp-session',
+        'Access-Control-Expose-Headers': 'x-gwp-mtime, x-gwp-size',
         'Access-Control-Allow-Private-Network': 'true',
         'Access-Control-Max-Age': '600',
       });
@@ -111,6 +121,7 @@ export class Hub {
       if (path === '/relay/call' && req.method === 'POST') return this.relayCall(req, res);
     }
     if (path === '/mcp') return this.mcpHttp(req, res);
+    if (path.startsWith('/fs/')) return this.fs(req, res, url);
     if (path === '/' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`GameWorld Painter MCP server ${this.o.version}\nMCP endpoint: http://127.0.0.1:${this.o.port}/mcp\nApp: ${this.app ? 'connected' : 'not connected'}\n`);
@@ -140,6 +151,8 @@ export class Hub {
       title: url.searchParams.get('title') || '', api: +url.searchParams.get('api') || 0, version: url.searchParams.get('version') || '',
     };
     this.app = app;
+    const page = url.searchParams.get('page');
+    try { if (page && /^https?:\/\//.test(page) && this.originAllowed(new URL(page).origin)) this.appUrl = page; } catch { /* not a URL */ }
     const beat = setInterval(() => res.write(': keep-alive\n\n'), 15000);
     req.on('close', () => { clearInterval(beat); if (this.app === app) this.dropApp('the page closed'); });
     this.o.log?.(`app connected (${app.origin || 'no origin'}${app.title ? ', ' + app.title : ''})`);
@@ -180,10 +193,10 @@ export class Hub {
   }
 
   /** Waits a little for the app (it may be reloading), then runs the tool there. */
-  async callApp(tool, args, client, signal) {
+  async callApp(tool, args, client, signal, waitMs) {
     if (!this.app) {
       await new Promise(resolve => {
-        const t = setTimeout(resolve, this.o.waitAppMs ?? 4000);
+        const t = setTimeout(resolve, waitMs ?? this.o.waitAppMs ?? 4000);
         this.appWaiters.push(() => { clearTimeout(t); resolve(); });
       });
     }
@@ -247,6 +260,7 @@ export class Hub {
     return {
       name: 'game-world-painter-mcp', version: this.o.version, api: this.o.api, port: this.o.port,
       app: this.app ? { connected: true, origin: this.app.origin, title: this.app.title, since: this.app.since } : { connected: false },
+      app_url: this.appUrl,
       agents: [...this.agents.values()].map(({ seen, ...a }) => a),
       calls: { active: this.calls.size, total: this.total },
       command: this.o.command,
@@ -266,10 +280,62 @@ export class Hub {
     res.on('close', () => { if (!res.writableEnded) ac.abort(); });
     if (b?.client) this.touchAgent(b.client, 'relay', `relay:${b.agent}`);
     try {
-      const result = await this.callApp(b.tool, b.args || {}, b.client, ac.signal);
+      if (b.grant) this.grant(b.grant);
+      const result = await this.callApp(b.tool, b.args || {}, b.client, ac.signal, b.waitMs);
       send(res, 200, { ok: true, result });
     } catch (e) {
       send(res, 200, { ok: false, error: e.message, notConnected: e instanceof AppNotConnected });
+    }
+  }
+
+  // ------------------------------------------------------------------------------------------------ map files for the app
+
+  /** The files of a granted map folder, for the connected app: stat, read, write (atomic), remove. */
+  async fs(req, res, url) {
+    if (!this.app || req.headers['x-gwp-session'] !== this.app.session) return send(res, 403, { error: 'Only the app connected to this server' });
+    const root = path.resolve(url.searchParams.get('root') || '');
+    if (!this.grants.has(root)) return send(res, 403, { error: 'This folder was not opened by the agent (open_map, create_map)' });
+    const rel = url.searchParams.get('path') || '';
+    const file = path.resolve(root, rel);
+    if (!rel || path.isAbsolute(rel) || !file.startsWith(root + path.sep)) return send(res, 400, { error: 'Bad path' });
+    try { // no way out of the folder through a link
+      const realRoot = await fsp.realpath(root), realDir = await fsp.realpath(path.dirname(file)).catch(() => null);
+      if (realDir && realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) return send(res, 400, { error: 'Bad path' });
+    } catch { return send(res, 404, { error: 'The folder is gone' }); }
+    const op = url.pathname.slice(4), stamp = st => ({ size: st.size, mtime: Math.floor(st.mtimeMs) });
+    try {
+      if (op === 'stat' && req.method === 'GET') {
+        const st = await fsp.stat(file);
+        if (!st.isFile()) return send(res, 404, { error: 'Not a file' });
+        return send(res, 200, stamp(st));
+      }
+      if (op === 'read' && req.method === 'GET') {
+        const fh = await fsp.open(file, 'r');
+        try {
+          const st = await fh.stat();
+          if (!st.isFile()) return send(res, 404, { error: 'Not a file' });
+          const data = await fh.readFile();
+          res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-GWP-Mtime': String(Math.floor(st.mtimeMs)), 'X-GWP-Size': String(data.length) });
+          return res.end(data);
+        } finally { await fh.close(); }
+      }
+      if (op === 'write' && req.method === 'PUT') {
+        const data = await readBody(req);
+        await fsp.mkdir(path.dirname(file), { recursive: true });
+        const tmp = `${file}.gwp-${randomUUID().slice(0, 8)}.tmp`;
+        await fsp.writeFile(tmp, data);
+        await fsp.rename(tmp, file); // atomic: other programs see the old file or the new one
+        return send(res, 200, stamp(await fsp.stat(file)));
+      }
+      if (op === 'remove' && req.method === 'DELETE') {
+        await fsp.rm(file, { force: true });
+        return send(res, 200, { ok: true });
+      }
+      return send(res, 405, { error: 'Not allowed' });
+    } catch (e) {
+      if (e.code === 'ENOENT') return send(res, 404, { error: 'Not found' });
+      this.o.log?.(`file ${op} ${file}: ${e.message}`);
+      return send(res, 500, { error: e.message });
     }
   }
 
@@ -338,6 +404,16 @@ function send(res, status, body) {
   const text = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(text);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', c => { size += c.length; if (size > MAX_BODY) { reject(new Error('Too large')); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 }
 
 function readJson(req) {

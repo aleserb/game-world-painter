@@ -33,6 +33,35 @@ export const TOOLS = [
     annotations: ro,
   },
   {
+    name: 'open_map',
+    title: 'Open a map by its path',
+    description: 'Opens the map in the folder at "path" (the folder with metadata.json) in GameWorld Painter. The app then reads and writes that folder through this MCP server, without the user picking it. When no app is connected, the server opens it in the default browser with a link that connects it and opens the map (the user may have to allow Chrome to reach this device). The map open before is saved first.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'The folder of the map (or its metadata.json); ~ is the home folder' }, browser: { type: 'boolean', description: 'Open a browser when no app is connected (default true)' } }, required: ['path'], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'create_map',
+    title: 'Create a new map',
+    description: 'Creates a new map in the folder at "path" (made if missing; it must not have a map yet) and opens it in the app: the bounds and cell size in the unit of the map, and a set of layers — "basic" (terrain height, ground, zones, water, roads, rivers, borders, rocks, grass, bushes, trees, buildings, enemies, chests, hiding spots, notes), "notes" (only notes), or "same" (the layers of the map open now, empty). Then shape it with the other tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The folder for the map; ~ is the home folder' },
+        title: { type: 'string', description: 'The name of the map' },
+        unit: { type: 'string', enum: ['m', 'cm', 'ft', 'in', 'px', 'u'], description: 'The unit of every number (default m): cm for Unreal, in for Source, px for 2D' },
+        width: { type: 'number', description: 'Along x (default 256 m or the same in the unit)' },
+        height: { type: 'number', description: 'Along z (default: as width)' },
+        cell: { type: 'number', description: 'The cell size (default about 0.25–0.5 m); at most 2048 cells on a side' },
+        center: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: '[x, z] of the middle (default [0, 0])' },
+        layers: { type: 'string', enum: ['basic', 'notes', 'same'], description: 'Default basic' },
+        browser: { type: 'boolean', description: 'Open a browser when no app is connected (default true)' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
     name: 'get_user_context',
     title: 'What the user selected',
     description: 'What the user is pointing at now: the selected area (its bounds and size), the selected items, the selected layers, the active layer and tool, the view and the cursor. Use it for requests like "this area", "here", "the selected ones".',
@@ -396,18 +425,19 @@ export const TOOLS = [
 ];
 
 /** Tools that the server runs itself (with help from the app), not the page. */
-export const SERVER_TOOLS = new Set(['get_project_path']);
+export const SERVER_TOOLS = new Set(['get_project_path', 'open_map', 'create_map']);
 
 /** Tools that change the map: they fail while the user allows reading only. */
 export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 
 /** Tool calls that may wait for the user (a confirmation, a proposal under review): a longer timeout. */
-export const SLOW_TOOLS = new Set(['delete_items', 'submit_proposal', 'wait_for_review', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
+export const SLOW_TOOLS = new Set(['open_map', 'create_map', 'delete_items', 'submit_proposal', 'wait_for_review', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
 
 export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world seen from above, open in the user's browser. You read it and change it through these tools; every change appears at once in the app, and the user can undo it (Ctrl+Z).
 
 - Start with get_map_info (layers, unit, zones) and get_user_context ("this area" means the user's selected area: {"area":"selection"}).
 - get_project_path gives the folder of the map on disk (metadata.json, the layer PNG and JSON files) for work with files and scripts.
+- open_map opens a map by its folder path, create_map makes a new one; when the app is not open, the server opens it in the browser.
 - Look with render_map; measure with describe_region, find_items, find_spots, analyze_items, analyze_walkability, find_route.
 - Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch: each call is one undo step.
 - ${REGION_DOC.replace(/\n/g, '\n  ')}

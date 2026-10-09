@@ -230,5 +230,57 @@ T.undo = (args, ctx) => {
   return { data: { undone: done } };
 };
 
+// ------------------------------------------------------------------------------------------------ maps by path
+
+/** Saves the open map before another one opens; fails when that is not possible. */
+async function saveOpenMap() {
+  const app = A();
+  if (ME.agentReview?.active) ME.agentReview.drop('the agent opened another map');
+  if (app.folder && app.S.project && app.anyDirty()) {
+    await app.save({ auto: true });
+    if (app.anyDirty()) fail(`The map open now ("${app.S.project.title}") has changes the app could not save: ask the user to save it or close it first`);
+  }
+}
+
+/** open_map (mcp/server.mjs): the server granted the folder; the app reads and writes it through the server. */
+T._open_map = async ({ root, name }) => {
+  await saveOpenMap();
+  const f = new ME.RemoteFolder(root, name);
+  if ((await f.permission()) !== 'granted') fail(`The MCP server does not let the app use ${root}`);
+  await A().connectFolder(f);
+  const { S } = A();
+  if (!S.project) fail(`${root}: its metadata.json cannot be read`);
+  ME.agent.setProjectPath(root);
+  return { data: { opened: root, title: S.project.title, unit: S.project.unit || 'm', layers: S.layers.length, note: 'Call get_map_info for its layers.' } };
+};
+
+/** create_map (mcp/server.mjs): a new map in a folder the server made and granted. */
+T._create_map = async args => {
+  const unit = args.unit || 'm', u = ME.unitOf(unit), k = u.k;
+  if (args.unit && !ME.UNITS[args.unit]) fail(`unit is one of ${Object.keys(ME.UNITS).join(', ')}`);
+  const width = args.width ?? 256 * k, height = args.height ?? width;
+  if (!(width > 0 && height > 0)) fail('width and height must be positive');
+  let cell = args.cell ?? ME.nice(Math.max(width, height) / 1024);
+  if (Math.max(width, height) / cell > 2048) {
+    if (args.cell) fail(`At most 2048 cells on a side: with cells of ${cell} the map is ${Math.round(Math.max(width, height) / cell)} cells wide. Take bigger cells (at least ${ME.nice(Math.max(width, height) / 2048)}).`);
+    cell = ME.stepAtLeast(Math.max(width, height) / 2048);
+  }
+  const cols = Math.round(width / cell), rows = Math.round(height / cell);
+  if (Math.min(cols, rows) < 16) fail('At least 16 cells on a side: take smaller cells');
+  const [cx, cz] = args.center ? pt(args.center, 'center') : [0, 0], W = +(cols * cell).toFixed(4), H = +(rows * cell).toFixed(4);
+  const nw = { x0: +(cx - W / 2).toFixed(4), z0: +(cz - H / 2).toFixed(4), width: W, height: H, cols, rows };
+  const layers = args.layers || 'basic';
+  if (!['basic', 'notes', 'same'].includes(layers)) fail('layers is basic, notes or same');
+  if (layers === 'same' && !A().S.project) fail('layers "same" copies the layers of the open map: no map is open');
+  await saveOpenMap();
+  const f = new ME.RemoteFolder(args.root, args.name);
+  if ((await f.permission()) !== 'granted') fail(`The MCP server does not let the app use ${args.root}`);
+  const title = String(args.title || args.name || 'New map');
+  try { await A().createMapIn(f, nw, title, layers, unit); } catch (e) { fail(e.message); }
+  const { S } = A();
+  ME.agent.setProjectPath(args.root);
+  return { data: { created: args.root, title, unit, bounds: [nw.x0, nw.z0, r2(nw.x0 + W), r2(nw.z0 + H)], cell, cells: [cols, rows], layers: S.layers.map(l => `${l.id} (${l.type})`), note: 'The map is open in the app. Shape it with the other tools (edit_terrain, paint_layer, scatter_items…).' } };
+};
+
 ME.agentWrite = { addItems, cleanItems, writable, flash, boxOf, moveItem, turnItem };
 })(window.ME);

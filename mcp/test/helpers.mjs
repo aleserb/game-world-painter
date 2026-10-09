@@ -16,7 +16,7 @@ export function freePort() {
 /** Starts the server for an agent (stdio); returns {request(method, params), notify, kill, stderr}.
  *  o.onRequest(method, params): answers the server's requests (roots/list); o.cwd: its working directory. */
 export function startStdio(port, extra = [], env = {}, o = {}) {
-  const p = spawn(process.execPath, [SERVER, '--stdio', '--port', String(port), ...extra], { cwd: o.cwd, env: { ...process.env, GWP_MCP_WAIT_APP_MS: '300', GWP_SEARCH_HOME: '0', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const p = spawn(process.execPath, [SERVER, '--stdio', '--port', String(port), ...extra], { cwd: o.cwd, env: { ...process.env, GWP_MCP_WAIT_APP_MS: '300', GWP_SEARCH_HOME: '0', GWP_OPEN_BROWSER: '0', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
   let buf = '', next = 1, stderr = '';
   const waiting = new Map();
   p.stdout.on('data', d => {

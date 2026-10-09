@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // GameWorld Painter MCP server: lets AI agents (Claude Code, Codex, GitHub Copilot, VS Code, Cursor, Gemini CLI...)
 // read and edit the map open in GameWorld Painter. See README.md. No dependencies: Node.js 18 or newer.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, promises as fsp } from 'node:fs';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
@@ -29,17 +31,23 @@ Options:
   --stdio               MCP over stdin/stdout (default when started by an agent)
   --allow-origin <o>    also let this web origin connect as the app (repeat; "null" for a page opened from disk)
   --timeout <s>         how long a tool call may take in the app (default 120)
+  --app-url <url>       the app to open for open_map / create_map when none is connected
+                        (default ${'https://aleserb.github.io/game-world-painter/'}, env GWP_APP_URL)
+  --no-browser          never open a browser (env GWP_OPEN_BROWSER=0)
   --quiet               no log on stderr
   -v, --version         -h, --help`;
 
 function parseArgs(argv) {
-  const o = { port: +process.env.GWP_MCP_PORT || DEFAULT_PORT, host: '127.0.0.1', origins: [], timeout: 120, mode: null, quiet: false, command: null };
+  const o = { port: +process.env.GWP_MCP_PORT || DEFAULT_PORT, host: '127.0.0.1', origins: [], timeout: 120, mode: null, quiet: false, command: null,
+    appUrl: process.env.GWP_APP_URL || 'https://aleserb.github.io/game-world-painter/', browser: process.env.GWP_OPEN_BROWSER !== '0' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], next = () => { if (i + 1 >= argv.length) fail(`${a} needs a value`); return argv[++i]; };
     if (a === '--port') o.port = +next();
     else if (a === '--host') o.host = next();
     else if (a === '--allow-origin') o.origins.push(next());
     else if (a === '--timeout') o.timeout = +next();
+    else if (a === '--app-url') o.appUrl = next();
+    else if (a === '--no-browser') o.browser = false;
     else if (a === '--http') o.mode = 'http';
     else if (a === '--stdio') o.mode = 'stdio';
     else if (a === '--quiet') o.quiet = true;
@@ -90,6 +98,7 @@ let helloTimer = null;
 /** Owns the port, or relays to the process that does; with takeover when that one exits. One attempt at a time
  *  (a tool call and the hello timer may both try to take over). */
 let starting = null;
+const grants = new Set(); // map folders this process's agent opened: the app may use them (given again after a takeover)
 function startRole() {
   if (role === 'hub') return Promise.resolve(true);
   return (starting ||= startRoleOnce().finally(() => { starting = null; }));
@@ -101,6 +110,7 @@ async function startRoleOnce() {
     await h.listen();
     hub = h;
     role = 'hub';
+    for (const g of grants) hub.grant(g);
     clearInterval(helloTimer);
     if (localClient) hub.touchAgent(localClient, 'stdio', 'local');
     log(`listening on http://127.0.0.1:${opts.port} (the app connects here${opts.mode === 'http' ? `; MCP endpoint /mcp` : ''})`);
@@ -131,18 +141,20 @@ function startHello() {
 }
 
 /** Runs a tool in the app (through the hub here, or the one of another process); returns its raw result or throws. */
-async function appCall(name, args, ctx) {
+async function appCall(name, args, ctx, { waitMs, grant } = {}) {
+  if (grant) grants.add(grant);
   if (role === 'none') await startRole();
-  if (role === 'hub') return hub.callApp(name, args, ctx.client || localClient, ctx.signal);
+  if (role === 'hub') { if (grant) hub.grant(grant); return hub.callApp(name, args, ctx.client || localClient, ctx.signal, waitMs); }
   if (role === 'relay') {
     let r;
     try {
-      r = await postJson('/relay/call', { tool: name, args, client: ctx.client || localClient, agent: agentId }, ctx.signal);
+      r = await postJson('/relay/call', { tool: name, args, client: ctx.client || localClient, agent: agentId, waitMs, grant }, ctx.signal);
     } catch (e) {
       if (ctx.signal?.aborted) throw e;
       await startRole(); // the hub is gone: take over and run it here
       if (role !== 'hub') throw e;
-      return hub.callApp(name, args, ctx.client || localClient, ctx.signal);
+      if (grant) hub.grant(grant);
+      return hub.callApp(name, args, ctx.client || localClient, ctx.signal, waitMs);
     }
     if (!r.ok) throw Object.assign(new Error(r.error), { plain: true });
     return r.result;
@@ -153,10 +165,72 @@ async function appCall(name, args, ctx) {
 async function callTool(name, args, ctx) {
   try {
     if (name === 'get_project_path') return toolResult(await projectPath(args, ctx));
+    if (name === 'open_map' || name === 'create_map') return toolResult(await openOrCreate(name, args, ctx));
     return toolResult(await appCall(name, args, ctx));
   } catch (e) {
     return toolError(e instanceof AppNotConnected || e.fromApp || e.plain ? e.message : `Error: ${e.message}`);
   }
+}
+
+// ------------------------------------------------------------------------------------------------ open_map, create_map
+
+const expand = p => path.resolve(String(p).replace(/^~(?=$|[\/\\])/, os.homedir()));
+
+/** Is the app connected (here or at the hub)? */
+async function appConnected() {
+  if (role === 'none') await startRole();
+  if (role === 'hub') return !!hub.app;
+  const st = await getJson('/status').catch(() => null);
+  return !!st?.app?.connected;
+}
+
+async function appUrl() {
+  const st = role === 'hub' ? hub.status() : await getJson('/status').catch(() => null);
+  return st?.app_url || opts.appUrl;
+}
+
+/** Opens the app in the default browser, connected to this server and told which map comes. */
+function openBrowser(url) {
+  const cmd = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]] : ['xdg-open', [url]];
+  try {
+    const p = spawn(cmd[0], cmd[1], { detached: true, stdio: 'ignore' });
+    p.on('error', () => {});
+    p.unref();
+    return true;
+  } catch { return false; }
+}
+
+/** open_map / create_map: the folder is granted to the app (it reads and writes it through this server), the app is
+ *  opened in a browser when none is connected, then it opens or creates the map. */
+async function openOrCreate(name, args, ctx) {
+  if (!args.path) throw Object.assign(new Error('Give "path": the folder of the map'), { plain: true });
+  let root = expand(args.path);
+  if (path.basename(root) === 'metadata.json') root = path.dirname(root);
+  const hasMeta = existsSync(path.join(root, 'metadata.json'));
+  if (name === 'open_map' && !hasMeta) throw Object.assign(new Error(`${root} is not a map: it has no metadata.json. To make a new map there, use create_map.`), { plain: true });
+  if (name === 'create_map') {
+    if (hasMeta) throw Object.assign(new Error(`${root} already has a map (metadata.json): open it with open_map, or choose another folder.`), { plain: true });
+    await fsp.mkdir(root, { recursive: true });
+  }
+  root = await fsp.realpath(root);
+  let opened = null;
+  if (!(await appConnected())) {
+    const url = new URL(await appUrl());
+    url.searchParams.set('mcp', String(opts.port));
+    url.searchParams.set('map', root);
+    const href = url.toString();
+    if (args.browser === false || !opts.browser || !openBrowser(href)) {
+      throw Object.assign(new Error(`GameWorld Painter is not open. Open this link in Chrome or Edge (it connects to this server and opens the map), then call ${name} again: ${href}`), { plain: true });
+    }
+    opened = href;
+    log(`opened the app for ${root}: ${href}`);
+  }
+  const call = name === 'open_map' ? '_open_map' : '_create_map';
+  const appArgs = { root, name: path.basename(root), ...(name === 'create_map' ? args : {}) };
+  delete appArgs.path; delete appArgs.browser;
+  const r = await appCall(call, appArgs, ctx, { waitMs: opened ? 90000 : undefined, grant: root });
+  if (opened && r.data) r.data.opened_browser = opened;
+  return r;
 }
 
 /** get_project_path: the app describes its folder, this process finds it on the disk, the app remembers the path. */

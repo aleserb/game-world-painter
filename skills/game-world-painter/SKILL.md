@@ -25,6 +25,9 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
 
 ## How to work
 
+0. **The right map.** If the user names a map folder that is not the one open (`get_map_info` → `folder`), open it with
+   `open_map {"path": …}`; for a new world use `create_map` (path, title, unit, size, cell, layers). The server opens the
+   app in the browser when it is not open.
 1. **Orient.** Call `get_map_info` (layers, kinds, property keys, zones, unit) and `get_user_context` when the request says
    "this", "here", "selected". Learn the conventions of *this* map — the kinds and property keys already used
    (e.g. enemies as one object per pack with `props.pack_size`) — and follow them.

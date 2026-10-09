@@ -7,11 +7,23 @@
 const API = 1;
 const VERSION = '0.2.0';
 const KEY = 'gwp-agent';
-const WRITE = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
+const WRITE = new Set(['_create_map', 'add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 const DEFAULTS = { enabled: false, url: 'http://127.0.0.1:38765', canWrite: true, confirmDeletes: true, highlight: true, review: false };
 
 const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; } })();
 const saveSettings = () => localStorage.setItem(KEY, JSON.stringify(settings));
+
+// A link from the agent's MCP server (open_map, create_map): ?mcp=<port> turns AI Agent on with that local server;
+// ?map=<path> is the map it opens (js/app.js shows it while it comes). Only servers on this computer.
+let fromLink = false;
+{
+  const q = new URLSearchParams(location.search), m = /^(?:(127\.0\.0\.1|localhost|\[::1\]):)?(\d{2,5})$/.exec(q.get('mcp') || '');
+  if (m && +m[2] < 65536) { settings.enabled = true; settings.url = `http://${m[1] || '127.0.0.1'}:${m[2]}`; saveSettings(); fromLink = true; }
+  if (q.has('mcp') || q.has('map')) {
+    q.delete('mcp'); q.delete('map');
+    history.replaceState(null, '', location.pathname + (q.toString() ? `?${q}` : '') + location.hash);
+  }
+}
 
 // state: off | connecting | offline | ready (server, no agent) | agent (an agent is connected) | replaced (another tab)
 const agent = ME.agent = {
@@ -71,9 +83,14 @@ async function connect() {
   delay = 2000;
   if (gen !== generation || !settings.enabled) return;
   const title = ME.app?.S.project?.title || '';
-  url.search = new URLSearchParams({ session: agent.session, api: API, version: VERSION, title }).toString();
+  url.search = new URLSearchParams({ session: agent.session, api: API, version: VERSION, title, page: location.origin + location.pathname }).toString();
   es = new EventSource(url);
-  es.addEventListener('hello', e => { agent.server = JSON.parse(e.data); setState(agent.server.agents.length ? 'agent' : 'ready'); });
+  es.addEventListener('hello', e => {
+    agent.server = JSON.parse(e.data);
+    setState(agent.server.agents.length ? 'agent' : 'ready');
+    if (fromLink) { fromLink = false; ME.app.toast('AI Agent is on: connected to the agent\'s MCP server', 3000); }
+    ME.app.reopenRemote?.().catch(err => console.warn(err)); // a map opened through the server
+  });
   es.addEventListener('status', e => { agent.server = JSON.parse(e.data); if (agent.state !== 'replaced') setState(agent.server.agents.length ? 'agent' : 'ready'); });
   es.addEventListener('call', e => { const call = JSON.parse(e.data); queue = queue.then(() => run(call)); });
   es.addEventListener('cancel', e => cancelled.add(JSON.parse(e.data).id));
@@ -143,7 +160,7 @@ async function run(call) {
     const ctx = { canWrite: settings.canWrite, confirmDeletes: settings.confirmDeletes && !review, review, client: call.client, clientName: call.client?.name };
     let result;
     if (review && call.tool === 'undo') result = ME.agentReview.withdraw();
-    else if (review && writes) ({ result, later } = await ME.agentReview.run(call, () => fn(args, ctx)));
+    else if (review && writes && !call.tool.startsWith('_')) ({ result, later } = await ME.agentReview.run(call, () => fn(args, ctx)));
     else result = await fn(args, ctx);
     if (result?.deferred) { later = result.deferred; result = null; } // waits for the user's decision
     body = { ok: true, result };

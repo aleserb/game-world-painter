@@ -400,8 +400,22 @@ async function pickFolder() {
   await connectFolder(f);
 }
 
+/** A map opened through the MCP server (ME.RemoteFolder): when the server is connected again, use it again. */
+async function reopenRemote() {
+  if (!(folder instanceof ME.RemoteFolder) || (S.project && S.access === 'granted')) return;
+  const p = await folder.permission();
+  if (p === 'denied') { if (!S.project) showBanner('remote-denied'); return; }
+  if (p !== 'granted') return;
+  if (S.project) { S.access = 'granted'; $('#banner').hidden = true; renderSaveState(); poll(); save({ auto: true }); return; }
+  await connectFolder(folder);
+}
+
 /** The stored folder needs the user's permission again (after a browser restart): one click. */
 async function reconnect() {
+  if (folder instanceof ME.RemoteFolder) {
+    if ((await folder.permission()) !== 'granted') { toast('The MCP server does not have this map open: ask the agent to open it again (open_map), or open the folder yourself', 6000); return; }
+    return reopenRemote();
+  }
   if (!folder) return pickFolder();
   if ((await folder.permission(true)) !== 'granted') { toast('No access to the folder'); return; }
   if (S.project) { S.access = 'granted'; $('#banner').hidden = true; renderSaveState(); poll(); save({ auto: true }); return; }
@@ -440,6 +454,16 @@ function showBanner(kind, detail) {
     b.append(el('div', {}, el('code', {}, folder.name + '/'), ' has no metadata.json: it is not a project. Pick another folder, ' +
       'or start an empty map in this one.'),
     buttons(el('button', { class: 'primary', onclick: pickFolder }, 'Another folder…'), el('button', { onclick: newMapHere }, 'New empty map here')));
+  } else if (kind === 'agent-open') {
+    b.append(el('h3', {}, 'Opening a map for the AI agent'),
+      el('div', {}, 'The AI agent asked to open ', el('code', {}, detail), '. It opens here as soon as this page is connected to the agent\'s MCP server (Chrome may ask to let the page reach apps on this device: allow it).'),
+      buttons(el('button', { onclick: () => ME.agentUi?.open() }, 'AI Agent…'), el('button', { onclick: pickFolder }, 'Open folder…')));
+  } else if (kind === 'remote') {
+    b.append(el('div', {}, 'The map ', el('code', {}, folder.path), ' was opened by the AI agent: it opens again when this page is connected to the agent\'s MCP server (turn on AI Agent).'),
+      buttons(el('button', { class: 'primary', onclick: reconnect }, 'Try again'), el('button', { onclick: () => ME.agentUi?.open() }, 'AI Agent…'), el('button', { onclick: pickFolder }, 'Open folder…')));
+  } else if (kind === 'remote-denied') {
+    b.append(el('div', {}, 'The MCP server does not have ', el('code', {}, folder.path), ' open any more (it was restarted). Ask the agent to open it again, or open the folder yourself.'),
+      buttons(el('button', { class: 'primary', onclick: pickFolder }, 'Open folder…'), el('button', { onclick: () => openMapDialog('new') }, 'New map…')));
   } else if (kind === 'badmeta') {
     b.append(el('div', {}, `metadata.json of ${folder.name}/ cannot be read: ${detail}`),
       buttons(el('button', { class: 'primary', onclick: () => connectFolder(folder) }, 'Try again'), el('button', { onclick: pickFolder }, 'Another folder…')));
@@ -672,11 +696,19 @@ async function poll() {
 async function load() {
   view = new View(canvas, EMPTY_WORLD);
   view.resize();
-  if (!ME.Folder.supported) { showBanner('unsupported'); return; }
+  const opening = new URLSearchParams(location.search).get('map'); // a link of the AI agent: it opens this map
+  if (opening) { showBanner('agent-open', opening); return; }
   let handle = null;
   if (store.available) {
     try { handle = (await store.get('folder')) || null; } catch (err) { console.warn(err); }
   }
+  if (handle?.remote) { // a map the agent opened through the MCP server: it opens again when the server is connected
+    folder = new ME.RemoteFolder(handle.remote, handle.name);
+    S.access = 'prompt';
+    showBanner('remote');
+    return;
+  }
+  if (!ME.Folder.supported) { showBanner('unsupported'); return; }
   if (!handle) { showBanner('open'); return; }
   folder = new ME.Folder(handle);
   const p = await folder.permission(false);
@@ -3687,7 +3719,13 @@ async function createMap(nw, title, layersMode, unitId = 'm') {
     if (err.name !== 'AbortError') toast(err.message, 5000);
     return;
   }
-  if (await f.exists('metadata.json')) { toast(`${f.name}/ already has a map (metadata.json): choose an empty folder — the folder dialog can make a new one`, 6000); return; }
+  try { await createMapIn(f, nw, title, layersMode, unitId); } catch (err) { toast(err.message, 6000); }
+}
+
+/** A new map in folder f (a picked folder, or one the AI agent's MCP server opened): metadata.json and empty layer
+ *  files, then it is opened. */
+async function createMapIn(f, nw, title, layersMode, unitId = 'm') {
+  if (await f.exists('metadata.json')) throw new Error(`${f.name}/ already has a map (metadata.json): choose an empty folder — the folder dialog can make a new one`);
   if (folder && S.project && anyDirty()) await save(); // the open map keeps its changes
   const proj = projOf(nw, unitId);
   let metas;
@@ -3971,7 +4009,7 @@ ME.app = {
   world, mpp, toCell, layerById, canEdit, editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
   renderAll, renderLayers, renderProps, renderOptions, requestRender, renderSaveState, markMeta, viewChanged,
   insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, mapUnit, fmt, fmtLen,
-  itemCenter, selectedItems, saveUi, eventPos, metaDirty, scheduleSave, afterHistory: () => { pruneSelection(); renderAll(); },
+  itemCenter, selectedItems, saveUi, eventPos, metaDirty, scheduleSave, anyDirty, save, connectFolder, createMapIn, reopenRemote, afterHistory: () => { pruneSelection(); renderAll(); },
 };
 
 window.gwp = { // for the console and tests

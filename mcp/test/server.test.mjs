@@ -215,3 +215,60 @@ test('get_project_path: the folder found through the client\'s roots, its workin
     app.close();
   } finally { await c2.kill(); }
 });
+
+test('open_map, create_map: the folder is granted to the connected app only, inside the folder only', async () => {
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gwp-open-')));
+  const map = path.join(tmp, 'island');
+  makeProject(map);
+  fs.writeFileSync(path.join(tmp, 'secret.txt'), 'no');
+  const port = await freePort();
+  const c = startStdio(port);
+  try {
+    await initialize(c);
+    // no app: a link to open it (the browser is not opened in tests)
+    const none = await c.request('tools/call', { name: 'open_map', arguments: { path: map } });
+    assert.equal(none.result.isError, true);
+    assert.match(none.result.content[0].text, /mcp=\d+&map=/);
+    await listening(port);
+    const calls = [];
+    const app = fakeApp(port, (tool, args) => { calls.push([tool, args]); return { data: { ok: tool } }; });
+    await app.ready;
+    const fsReq = (method, op, p, { root = map, session = app.session, body } = {}) =>
+      req(port, method, `/fs/${op}?root=${encodeURIComponent(root)}&path=${encodeURIComponent(p)}`, { body, headers: { Origin: 'http://localhost:8000', 'X-GWP-Session': session } });
+    assert.equal((await fsReq('GET', 'stat', 'metadata.json')).status, 403, 'not granted before open_map');
+    const r = await c.request('tools/call', { name: 'open_map', arguments: { path: path.join(map, 'metadata.json') } });
+    assert.equal(r.result.isError, false, r.result.content[0].text);
+    assert.deepEqual(calls.at(-1), ['_open_map', { root: map, name: 'island' }]);
+    const st = await fsReq('GET', 'stat', 'metadata.json');
+    assert.equal(st.status, 200);
+    assert.equal(st.json.size, fs.statSync(path.join(map, 'metadata.json')).size);
+    const rd = await fsReq('GET', 'read', 'layers/trees.png');
+    assert.equal(rd.text, 'abc');
+    assert.ok(+rd.headers['x-gwp-mtime'] > 0);
+    const wr = await fsReq('PUT', 'write', 'layers/new.json', { body: '{"items":[]}' });
+    assert.equal(wr.status, 200);
+    assert.equal(fs.readFileSync(path.join(map, 'layers', 'new.json'), 'utf8'), '{"items":[]}');
+    assert.equal((await fsReq('DELETE', 'remove', 'layers/new.json')).status, 200);
+    assert.equal(fs.existsSync(path.join(map, 'layers', 'new.json')), false);
+    assert.equal((await fsReq('GET', 'stat', 'nope.png')).status, 404);
+    assert.equal((await fsReq('GET', 'read', '../secret.txt')).status, 400, 'no way out of the folder');
+    assert.equal((await fsReq('GET', 'read', '/etc/passwd')).status, 400);
+    assert.equal((await fsReq('GET', 'read', 'metadata.json', { root: tmp })).status, 403, 'only the granted folder');
+    assert.equal((await fsReq('GET', 'read', 'metadata.json', { session: 'someone-else' })).status, 403, 'only the connected app');
+    fs.symlinkSync(tmp, path.join(map, 'up'));
+    assert.equal((await fsReq('GET', 'read', 'up/secret.txt')).status, 400, 'no way out through a link');
+    assert.equal((await req(port, 'GET', `/fs/read?root=${encodeURIComponent(map)}&path=metadata.json`, { headers: { Origin: 'https://evil.example', 'X-GWP-Session': app.session } })).status, 403);
+    // create_map: makes the folder, refuses a folder with a map
+    const fresh = path.join(tmp, 'new', 'world');
+    const cr = await c.request('tools/call', { name: 'create_map', arguments: { path: fresh, title: 'World', unit: 'cm', width: 10000 } });
+    assert.equal(cr.result.isError, false, cr.result.content[0].text);
+    assert.equal(fs.statSync(fresh).isDirectory(), true);
+    assert.deepEqual(calls.at(-1), ['_create_map', { root: fresh, name: 'world', title: 'World', unit: 'cm', width: 10000 }]);
+    const again = await c.request('tools/call', { name: 'create_map', arguments: { path: map } });
+    assert.match(again.result.content[0].text, /already has a map/);
+    const notMap = await c.request('tools/call', { name: 'open_map', arguments: { path: tmp } });
+    assert.match(notMap.result.content[0].text, /not a map/);
+    app.close();
+  } finally { await c.kill(); }
+});

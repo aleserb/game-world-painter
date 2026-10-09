@@ -3,6 +3,8 @@
 //
 //   node tests/agent.mjs        (CHROME=/path/to/chrome to choose the browser)
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { openBrowser, sleep, DEMO } from './browser.mjs';
 import { SERVER_TOOLS } from '../mcp/lib/tools.mjs';
 import { startStdio, initialize, freePort } from '../mcp/test/helpers.mjs';
@@ -40,7 +42,7 @@ try {
   const tools = (await mcp.request('tools/list', {})).result.tools.map(t => t.name);
   const inApp = tools.filter(t => !SERVER_TOOLS.has(t));
   const missing = await ev(`${JSON.stringify(inApp)}.filter(t => typeof ME.agentTools[t] !== 'function')`);
-  check(missing.length === 0 && tools.length === 24, 'every MCP tool runs in the app (or the server)', missing.join(', '));
+  check(missing.length === 0 && tools.length === 26, 'every MCP tool runs in the app (or the server)', missing.join(', '));
 
   // looking
   const info = await call('get_map_info');
@@ -208,6 +210,34 @@ try {
   const log = await ev('ME.agent.log.length');
   check(log >= 25, 'the activity log', log);
   await ev(`gwp.layerById('water').meta.locked = false; true`);
+  // maps by path: the agent creates and opens maps; the app reads and writes them through the MCP server
+  const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gwp-e2e-')));
+  const newMap = path.join(tmpRoot, 'new-world');
+  const cm = await call('create_map', { path: newMap, title: 'New world', width: 200, cell: 0.5 });
+  check(cm.data?.created === newMap && fs.existsSync(path.join(newMap, 'metadata.json')) && (await ev('gwp.S.project?.title')) === 'New world'
+    && (await ev('gwp.folder instanceof ME.RemoteFolder')) && (await ev('gwp.S.layers.length')) === cm.data.layers.length && cm.data.cells[0] === 400,
+  'create_map: a new map on the disk, open in the app', cm.error || JSON.stringify(cm.data).slice(0, 200));
+  await call('add_items', { layer: 'enemies', items: [{ kind: 'wolf', x: 10, z: 10, props: { pack_size: 3 } }] });
+  const enemiesFile = path.join(newMap, 'layers', 'enemies.json');
+  check(await until(async () => fs.existsSync(enemiesFile) && JSON.parse(fs.readFileSync(enemiesFile, 'utf8')).items.length === 1, 8000), 'its changes are saved into the folder');
+  fs.writeFileSync(path.join(newMap, 'layers', 'notes.json'), '{"items": [\n{"id":1,"x":0,"z":0,"text":"written by a script"}\n]}\n');
+  check(await until(`gwp.layerById('notes').items[0]?.text === 'written by a script'`, 8000), 'a change made on the disk shows up (watching through the server)');
+  const copy = path.join(tmpRoot, 'island');
+  fs.cpSync(DEMO, copy, { recursive: true });
+  const om = await call('open_map', { path: copy });
+  check(om.data?.opened === copy && (await ev('gwp.S.project?.title')) === 'Demo island' && (await ev('ME.app.S.projectPath')) === copy, 'open_map: a map by its path', om.error || JSON.stringify(om.data));
+  const gp = await call('get_project_path');
+  check(gp.data?.path === copy && gp.data.found_by === 'remembered by the app', 'get_project_path knows it', JSON.stringify(gp.data?.found_by));
+  await b.send('Page.reload');
+  check(await until(`!!window.gwp && gwp.S.project?.title === 'Demo island' && gwp.folder instanceof ME.RemoteFolder && gwp.folder.path === ${JSON.stringify(copy)}`, 20000),
+    'after a reload the map opens again through the server');
+  // a link of the server turns AI Agent on and says which map comes
+  await ev(`localStorage.setItem('gwp-agent', JSON.stringify({ enabled: false })); true`);
+  await b.send('Page.navigate', { url: `${b.origin}/index.html?mcp=${port}&map=${encodeURIComponent(newMap)}` });
+  const linked = await until(`!!window.ME?.agent && ME.agent.settings.enabled && ['ready', 'agent'].includes(ME.agent.state) && location.search === '' && document.getElementById('banner').textContent.includes(${JSON.stringify(newMap)})`, 20000);
+  const om2 = await call('open_map', { path: newMap });
+  check(linked && om2.data?.opened === newMap && (await ev('gwp.S.project?.title')) === 'New world', 'a link with ?mcp= connects the app; then open_map opens the map', om2.error || '');
+
   // switching off
   await ev(`document.getElementById('agent-on').click(); true`);
   await until(async () => (await (await fetch(`http://127.0.0.1:${port}/status`)).json()).app.connected === false, 5000);

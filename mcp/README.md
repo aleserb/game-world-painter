@@ -47,6 +47,7 @@ Later the server will be on npm: `npx -y game-world-painter-mcp` instead of `nod
 | `get_map_info` | Start here: unit, bounds, every layer with what it holds, zones, what the user looks at |
 | `get_user_context` | The selected area and items, the active layer, the view, the cursor |
 | `get_project_path` | The full path of the map's folder on this computer and of every layer file, what the app has not saved |
+| `open_map`, `create_map` | Open a map by its folder path, or make a new one there (bounds, unit, cell size, a set of layers); opens the app in the browser when none is connected |
 | `render_map` | An image of the map (north up) with a coordinate grid; a highlight |
 | `describe_region` | Everything in a region: size, mask coverage, class shares, heights and slopes, items by kind |
 | `read_layer` | A coarse grid of a mask, categories or height layer |
@@ -81,6 +82,12 @@ The server also offers the skill and the [project format](../docs/project-format
 - **Protocol**: dual-era MCP. Legacy clients get the `initialize` handshake (2024-11-05 to 2025-11-25). Modern requests
   carry `_meta` per request (2026-07-28, with `server/discover`). Streamable HTTP at `/mcp` serves both: sessions for
   legacy clients, stateless with header checks for modern ones. JSON-RPC batches are accepted.
+- **Maps by path** (`open_map`, `create_map`): browsers cannot open a folder from a path, so the app reads and
+  writes such a map **through this server** (`/fs/stat`, `/fs/read`, `/fs/write` — atomic, `/fs/remove`). The server
+  serves only folders the agent opened or created, only to the connected app tab (its session), never outside the
+  folder (no `..`, no links out). When no app is connected it opens the default browser at
+  `https://aleserb.github.io/game-world-painter/?mcp=<port>&map=<path>` (the app on that link turns AI Agent on with
+  this local server and waits for the map). After a reload the app opens the map again once the server is connected.
 - **Review mode** (AI Agent → Settings → *Review the agent's changes*): a change is applied but held — shown on the map
   with a card (title, what changed, Before / After), not saved, its layers locked for the user — until the user
   clicks **Accept** (kept and saved), **Change…** (undone; their comment goes to the agent as `feedback`) or
@@ -119,6 +126,8 @@ node server.mjs setup        print the setup for each agent
 | `--stdio` | MCP over stdin / stdout (the default when an agent starts it) |
 | `--allow-origin` | Another web origin allowed to connect as the app (repeat) |
 | `--timeout` | Seconds a tool call may take in the app (deletions that wait for the user: 10×) |
+| `--app-url` | The app opened for `open_map` / `create_map` when none is connected (default the hosted one, or the last one that connected; env `GWP_APP_URL`) |
+| `--no-browser` | Never open a browser: the tool returns the link instead (env `GWP_OPEN_BROWSER=0`) |
 | `--quiet` | No log on stderr (the log never goes to stdout) |
 
 Environment: `GWP_MCP_PORT` (the port), `GWP_PROJECT_DIRS` (folders to search for the map's folder, separated by
