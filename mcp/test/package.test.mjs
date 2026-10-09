@@ -15,7 +15,8 @@ const npm = (args, cwd) => execFileSync(process.platform === 'win32' ? 'npm.cmd'
 test('the npm package: its files, and the installed command serves MCP', { timeout: 120000 }, async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gwp-pack-'));
   try {
-    const [info] = JSON.parse(npm(['pack', '--json', '--pack-destination', tmp], PKG));
+    const out = JSON.parse(npm(['pack', '--json', '--pack-destination', tmp], PKG));
+    const info = Array.isArray(out) ? out[0] : out['game-world-painter-mcp'] ?? Object.values(out)[0]; // npm 11: a list; npm 12: by name
     const files = info.files.map(f => f.path).sort();
     for (const f of ['LICENSE', 'README.md', 'package.json', 'server.mjs', 'lib/hub.mjs', 'lib/locate.mjs', 'lib/protocol.mjs', 'lib/tools.mjs',
       'skill/SKILL.md', 'skill/references/regions.md', 'skill/references/recipes.md', 'docs/project-format.md']) assert.ok(files.includes(f), `the package has ${f}`);

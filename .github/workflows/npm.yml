@@ -22,7 +22,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - name: npm 11.5.1 or newer (trusted publishing)
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
       - name: The tag is the package version
         if: github.event_name == 'push'
         run: |
