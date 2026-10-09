@@ -47,6 +47,7 @@ const dlg = $('#agent-dlg');
 let tab = 'start', client = localStorage.getItem('gwp-agent-client') || 'claude';
 
 function openDialog() {
+  if (!dlg.open) logShown = LOG_PAGE;
   render();
   if (!dlg.open) dlg.showModal();
 }
@@ -95,6 +96,9 @@ function statusCard() {
 
 const step = (n, title, ...body) => el('div', { class: 'step' }, el('span', { class: 'num' }, String(n)), el('div', {}, el('h4', {}, title), ...body));
 
+const LOG_PAGE = 200; // Activity rows drawn at a time (the dialog redraws on every call)
+let logShown = LOG_PAGE;
+
 const TABS = {
   start: ['Get started', () => [
     step(1, 'Add the MCP server to your agent', el('p', { class: 'muted' }, 'Once per agent: the agent then starts the server by itself with npx (the npm package ',
@@ -137,8 +141,10 @@ const TABS = {
   ]],
   activity: ['Activity', () => {
     if (!agent.log.length) return [el('p', { class: 'muted' }, 'What the agent asks the app shows here.')];
+    const shown = agent.log.slice(0, logShown), more = agent.log.length - shown.length;
     return [
-      el('div', { class: 'activity' }, ...agent.log.map(e => el('div', { class: `act ${e.status}` },
+      el('p', { class: 'muted small' }, `The latest ${agent.LOG_MAX} calls are kept (in this tab only); the newest first.`),
+      el('div', { class: 'activity' }, ...shown.map(e => el('div', { class: `act ${e.status}` },
         el('span', { class: 'time' }, e.time.toLocaleTimeString()),
         el('span', { class: 'tool' }, e.tool),
         el('span', { class: 'who muted' }, e.client),
@@ -146,7 +152,9 @@ const TABS = {
         el('div', { class: 'args muted small' }, e.args),
         e.comment ? el('div', { class: 'comment small' }, e.comment) : null,
         e.result ? el('div', { class: 'res small' }, e.result) : null))),
-      el('div', { class: 'layer-actions' }, el('button', { type: 'button', onclick: () => { agent.log.length = 0; render(); } }, 'Clear')),
+      el('div', { class: 'layer-actions' },
+        more ? el('button', { type: 'button', onclick: () => { logShown += LOG_PAGE; render(); } }, `Show older (${more})`) : null,
+        el('button', { type: 'button', onclick: () => { agent.log.length = 0; logShown = LOG_PAGE; render(); } }, 'Clear')),
     ];
   }],
   settings: ['Settings', () => {

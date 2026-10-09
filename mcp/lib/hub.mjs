@@ -22,13 +22,13 @@ const MAX_BODY = 64 * 1024 * 1024;
 export class AppNotConnected extends Error {}
 
 export class Hub {
-  /** o: {port, host, allowOrigins, version, api, log, timeoutMs, slowTools, waitAppMs, mcp: endpoint options} */
+  /** o: {port, host, allowOrigins, version, api, log, timeoutMs, slowTools, waitAppMs, sessionIdleMs, maxSessions, mcp: endpoint options} */
   constructor(o) {
     this.o = o;
     this.app = null; // {session, res, origin, since, title, api, version}
     this.calls = new Map(); // id -> {resolve, reject, timer, tool}
     this.agents = new Map(); // key -> {name, version, transport, since, seen}
-    this.httpSessions = new Map(); // legacy Streamable HTTP sessions: id -> McpEndpoint
+    this.httpSessions = new Map(); // legacy Streamable HTTP sessions: id -> {ep, used}; idle ones expire, at most maxSessions
     this.stateless = null;
     this.total = 0;
     this.appWaiters = [];
@@ -196,8 +196,9 @@ export class Hub {
   async callApp(tool, args, client, signal, waitMs) {
     if (!this.app) {
       await new Promise(resolve => {
-        const t = setTimeout(resolve, waitMs ?? this.o.waitAppMs ?? 4000);
-        this.appWaiters.push(() => { clearTimeout(t); resolve(); });
+        const w = () => { clearTimeout(t); resolve(); };
+        const t = setTimeout(() => { this.appWaiters = this.appWaiters.filter(x => x !== w); resolve(); }, waitMs ?? this.o.waitAppMs ?? 4000);
+        this.appWaiters.push(w);
       });
     }
     const app = this.app;
@@ -245,6 +246,9 @@ export class Hub {
   pruneAgents() {
     const now = Date.now();
     let changed = false;
+    // Streamable HTTP sessions the client left without DELETE: a client that comes back gets 404 and initializes again
+    const idle = this.o.sessionIdleMs ?? 3600000;
+    for (const [sid, s] of this.httpSessions) if (now - s.used > idle) this.httpSessions.delete(sid);
     for (const [k, a] of this.agents) {
       const ttl = a.transport === 'relay' ? 35000 : a.transport === 'http' ? 600000 : Infinity;
       if (now - a.seen > ttl) { this.agents.delete(k); changed = true; }
@@ -346,7 +350,7 @@ export class Hub {
   async mcpHttp(req, res) {
     if (req.method === 'GET' || req.method === 'DELETE') {
       const sid = req.headers['mcp-session-id'];
-      if (req.method === 'DELETE' && sid && this.httpSessions.delete(sid)) { res.writeHead(200); return res.end(); }
+      if (req.method === 'DELETE' && sid && this.httpSessions.delete(sid)) { this.dropAgent(`http:${sid}`); res.writeHead(200); return res.end(); }
       res.writeHead(405, { Allow: 'POST' });
       return res.end();
     }
@@ -370,12 +374,19 @@ export class Hub {
     } else if (one?.method === 'initialize') {
       const sid = randomUUID();
       ep = this.endpoint(info => this.touchAgent(info, 'http', `http:${sid}`));
-      this.httpSessions.set(sid, ep);
+      const max = this.o.maxSessions ?? 200;
+      while (this.httpSessions.size >= max) { // the least recently used goes (a Map keeps the order of use, see below)
+        const [old] = this.httpSessions.keys();
+        this.httpSessions.delete(old);
+        this.dropAgent(`http:${old}`);
+      }
+      this.httpSessions.set(sid, { ep, used: Date.now() });
       res.setHeader('Mcp-Session-Id', sid);
     } else {
-      const sid = req.headers['mcp-session-id'];
-      ep = sid ? this.httpSessions.get(sid) : null;
-      if (sid && !ep) return send(res, 404, rpcError(one?.id ?? null, -32001, 'Session not found: initialize again'));
+      const sid = req.headers['mcp-session-id'], s = sid ? this.httpSessions.get(sid) : null;
+      if (sid && !s) return send(res, 404, rpcError(one?.id ?? null, -32001, 'Session not found: initialize again'));
+      if (s) { s.used = Date.now(); this.httpSessions.delete(sid); this.httpSessions.set(sid, s); } // the most recently used last
+      ep = s?.ep;
       if (!ep) { // no session (a client that does not keep one): serve statelessly
         this.stateless ||= this.endpoint(info => this.touchAgent(info, 'http'));
         ep = this.stateless;

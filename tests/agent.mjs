@@ -329,6 +329,8 @@ try {
   const r5 = await p5;
   check(r4.data?.proposal?.status === 'pending' && /waiting for the user's review/.test(blocked.error || '') && r5.data?.proposal?.status === 'accepted',
     'review: pending, then wait_for_review; no new changes meanwhile', `${r4.data?.proposal?.status} | ${blocked.error} | ${r5.data?.proposal?.status}`);
+  const released = await ev(`ME.agentReview.list.filter(p => !['open', 'pending'].includes(p.status) && p !== ME.agentReview.shown).map(p => p.entries.length + p.marks.length + p.results.length)`);
+  check(released.length >= 3 && released.every(n => n === 0), 'decided changes let go of their undo steps, marks and results (memory)', JSON.stringify(released));
   check((await ev('gwp.history.undo.at(-1).label')) === 'AI: Later', 'review: an accepted proposal is one undo step', await ev('gwp.history.undo.at(-1).label'));
   // a single change with problems is not shown for review: it stays open for the agent to fix
   const bad1 = await call('add_items', { layer: 'buildings', items: [{ kind: 'shed', x: -2, z: 10, w: 3, d: 3 }] });
@@ -353,6 +355,18 @@ try {
   check(skill.every(Boolean), 'the skill files are served for the download');
   const log = await ev('ME.agent.log.length');
   check(log >= 25, 'the activity log', log);
+  // a long session: the Activity keeps the latest LOG_MAX calls and draws them a page at a time
+  const max = await ev('ME.agent.LOG_MAX');
+  await ev(`ME.agent.log.push(...Array.from({ length: ${max} }, (_, k) => ({ id: 'old' + k, time: new Date(), tool: 'describe_region', client: 'old', args: '{}', status: 'ok', result: 'x' }))); true`);
+  await call('get_user_context');
+  const capped = await ev(`[ME.agent.log.length, ME.agent.log[0].tool, ME.agent.pending()]`);
+  check(capped[0] === max && max === 1000 && capped[1] === 'get_user_context' && capped[2] === 0, 'the Activity keeps at most 1000 calls, the newest first; no call left pending', JSON.stringify(capped));
+  await ev(`[...document.querySelectorAll('#agent-dlg .tabs button')].find(b => b.textContent.startsWith('Activity')).click(); true`);
+  const rows0 = await ev(`document.querySelectorAll('#agent-dlg .act').length`);
+  await ev(`[...document.querySelectorAll('#agent-dlg button')].find(b => b.textContent.startsWith('Show older')).click(); true`);
+  const rows1 = await ev(`document.querySelectorAll('#agent-dlg .act').length`);
+  check(rows0 === 200 && rows1 === 400, 'the Activity draws 200 rows, "Show older" 200 more', `${rows0} → ${rows1}`);
+  await ev(`ME.agent.log.length = 0; document.getElementById('agent-dlg').close(); true`);
   await ev(`gwp.layerById('water').meta.locked = false; true`);
   // maps by path: the agent creates and opens maps; the app reads and writes them through the MCP server
   const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gwp-e2e-')));

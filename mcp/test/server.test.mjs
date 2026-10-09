@@ -150,6 +150,16 @@ test('Streamable HTTP: legacy sessions and modern stateless requests', async () 
     const list = await req(port, 'POST', '/mcp', { headers: { ...accept, 'Mcp-Session-Id': sid }, body: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
     assert.equal(list.json.result.tools.length, TOOLS.length);
     assert.equal((await req(port, 'GET', '/mcp')).status, 405);
+    // sessions left without DELETE do not pile up: at most 200, the least recently used goes first
+    const initBody = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'many', version: '1' } } };
+    const first = (await req(port, 'POST', '/mcp', { headers: accept, body: initBody })).headers['mcp-session-id'];
+    const ping = s => req(port, 'POST', '/mcp', { headers: { ...accept, 'Mcp-Session-Id': s }, body: { jsonrpc: '2.0', id: 9, method: 'ping' } });
+    assert.equal((await ping(sid)).status, 200); // used after the first: the first is the least recently used now
+    for (let k = 0; k < 199; k++) await req(port, 'POST', '/mcp', { headers: accept, body: initBody });
+    assert.equal((await ping(sid)).status, 200, 'the session in use is kept');
+    assert.equal((await ping(first)).status, 404, 'the oldest unused session is gone: initialize again');
+    assert.equal((await req(port, 'DELETE', '/mcp', { headers: { 'Mcp-Session-Id': sid } })).status, 200);
+    assert.equal((await ping(sid)).status, 404, 'a deleted session is gone');
     const modern = { ...accept, 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/list' };
     const m = await req(port, 'POST', '/mcp', { headers: modern, body: { jsonrpc: '2.0', id: 3, method: 'tools/list', params: { _meta: META('2026-07-28') } } });
     assert.equal(m.status, 200);

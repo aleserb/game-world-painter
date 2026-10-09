@@ -7,6 +7,7 @@
 const API = 1;
 const VERSION = '0.3.0';
 const KEY = 'gwp-agent';
+const LOG_MAX = 1000; // the Activity keeps the latest calls only: a long session does not grow memory
 const WRITE = new Set(['_create_map', 'add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 const DEFAULTS = { v: 2, enabled: false, url: 'http://127.0.0.1:38765', canWrite: true, confirmDeletes: true, highlight: true, review: true };
 
@@ -32,7 +33,7 @@ let fromLink = false;
 
 // state: off | connecting | offline | ready (server, no agent) | agent (an agent is connected) | replaced (another tab)
 const agent = ME.agent = {
-  API, VERSION, settings, saveSettings, WRITE,
+  API, VERSION, LOG_MAX, settings, saveSettings, WRITE,
   state: 'off', server: null, error: '', busy: 0, log: [], listeners: new Set(),
   session: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2),
   onChange(fn) { this.listeners.add(fn); },
@@ -40,7 +41,8 @@ const agent = ME.agent = {
 };
 
 let es = null, retry = null, queue = Promise.resolve(), generation = 0, delay = 2000; // delay: grows while no server answers
-const cancelled = new Set();
+const inflight = new Set(), cancelled = new Set(); // ids of the calls not answered yet; of those the server cancelled
+agent.pending = () => inflight.size;
 const base = () => settings.url.replace(/\/+$/, '');
 
 function setState(s, error = '') {
@@ -97,8 +99,8 @@ async function connect() {
     ME.app.reopenRemote?.().catch(err => console.warn(err)); // a map opened through the server
   });
   es.addEventListener('status', e => { agent.server = JSON.parse(e.data); if (agent.state !== 'replaced') setState(agent.server.agents.length ? 'agent' : 'ready'); });
-  es.addEventListener('call', e => { const call = JSON.parse(e.data); queue = queue.then(() => run(call)); });
-  es.addEventListener('cancel', e => cancelled.add(JSON.parse(e.data).id));
+  es.addEventListener('call', e => { const call = JSON.parse(e.data); inflight.add(call.id); queue = queue.then(() => run(call)); });
+  es.addEventListener('cancel', e => { const { id } = JSON.parse(e.data); if (inflight.has(id)) cancelled.add(id); }); // a late cancel is ignored
   es.addEventListener('replaced', () => { disconnect(true); setState('replaced', 'Another tab or window connected to the MCP server'); });
   es.onerror = () => {
     if (!es) return;
@@ -150,9 +152,9 @@ ME.onProjectOpen = () => {
 
 async function run(call) {
   const comment = typeof call.args?.comment === 'string' ? call.args.comment.trim().slice(0, 4000) : ''; // the agent's words on a change
-  const entry = { id: call.id, time: new Date(), tool: call.tool, client: call.client?.name || 'agent', args: summarize(call.args), comment, status: 'running' };
+  const entry = { id: call.id, time: new Date(), tool: call.tool, client: call.client?.name || 'agent', args: summarize(call.args), comment: comment.slice(0, 1000), status: 'running' };
   agent.log.unshift(entry);
-  if (agent.log.length > 200) agent.log.length = 200;
+  if (agent.log.length > LOG_MAX) agent.log.length = LOG_MAX;
   agent.busy++;
   agent.changed();
   const t0 = performance.now();
@@ -196,6 +198,7 @@ async function run(call) {
 }
 
 async function post(call, entry, body) {
+  inflight.delete(call.id);
   if (cancelled.delete(call.id)) { entry.status = 'cancelled'; agent.changed(); return; }
   try {
     await fetch(`${base()}/app/result`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: agent.session, id: call.id, ...body }) });
@@ -220,24 +223,27 @@ ME.agentFeedback = {
   /** Outlines a box [x0, z0, x1, z1], a cell mask or a point for a moment; msg: a toast. */
   flash(what, msg, ms = 2600) {
     const P = ME.agentReview?.collecting;
-    if (P && what) { // the places of a proposal stay outlined until the user decides
-      const m = { ...what };
-      if (what.mask) {
-        const g = ME.agentInternals.G(), b = ME.agentInternals.bounds(g, what.mask);
-        if (b.count) m.path = ME.maskOutline(what.mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R);
+    if (P && what) { // the places of a proposal stay outlined until the user decides: an outline and a box, not the mask
+      const { mask, ...m } = what;
+      if (mask) {
+        const g = ME.agentInternals.G(), b = ME.agentInternals.bounds(g, mask);
+        if (!b.count) return;
+        m.path = ME.maskOutline(mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R);
+        m.area = ME.agentInternals.worldBox(g, b);
       }
-      P.marks.push(m);
+      if (P.marks.length < 200) P.marks.push(m);
       return;
     }
     if (msg) ME.app.toast(`AI: ${msg}`, Math.min(ms + 400, 6000));
     if (!settings.highlight || !what) return;
-    const f = { ...what, until: performance.now() + ms, ms };
-    if (what.mask) {
-      const g = ME.agentInternals.G(), b = ME.agentInternals.bounds(g, what.mask);
+    const { mask, ...rest } = what, f = { ...rest, until: performance.now() + ms, ms };
+    if (mask) {
+      const g = ME.agentInternals.G(), b = ME.agentInternals.bounds(g, mask);
       if (!b.count) return;
-      f.path = ME.maskOutline(what.mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R);
+      f.path = ME.maskOutline(mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R);
     }
     flashes.push(f);
+    if (flashes.length > 50) flashes.splice(0, flashes.length - 50);
     tick();
   },
 };

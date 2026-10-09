@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Long sessions with an AI agent no longer grow memory: the Activity keeps the latest 1000 calls and draws them 200
+  at a time ("Show older"); decided proposals and finished changes let go of their undo snapshots, map marks and
+  results; a proposal keeps outlines, not full-map masks; a late cancel of a finished call is ignored.
+- MCP server: Streamable HTTP sessions left without DELETE expire after an hour idle, at most 200 are kept (the least
+  recently used goes; its client gets 404 and initializes again); waits for the app that timed out are let go.
+
 ## 0.2.1 — 2026-10-09
 
 - The MCP server package is published from GitHub Actions with npm trusted publishing and provenance (the first

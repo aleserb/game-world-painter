@@ -43,6 +43,15 @@ function create(title, client, single, review, active = true) {
   return P;
 }
 
+/** A change that is decided or gone keeps only what the agent may still ask about (wait_for_review, recent): its undo
+ *  steps (with snapshots of layers), its marks and results are let go, so a long session does not grow memory. */
+function settle(P) {
+  if (!P || ['open', 'pending'].includes(P.status) || R.shown === P) return;
+  P.entries = []; P.marks = []; P.results = []; P.layers = new Set(); P.waiters = []; P.before = false;
+  if (P.changes.length > 50) P.changes = [...P.changes.slice(0, 50), { label: `and ${P.changes.length - 50} more` }];
+}
+R.settle = settle;
+
 const label = e => String(e.label || '').replace(/^AI: /, '');
 const what = P => (P.review ? 'proposal' : 'change');
 
@@ -197,6 +206,7 @@ function decide(P, status, feedback = '') {
   if (R.active === P) R.active = null;
   if (status === 'accepted') mergeSteps(P); // one undo step
   for (const w of P.waiters.splice(0)) { clearTimeout(w.timer); w.resolve(decisionOf(P)); }
+  settle(P);
   A().afterHistory();
   A().scheduleSave();
   render();
@@ -212,7 +222,9 @@ function finishDirect(P) {
   mergeSteps(P);
   for (const w of P.waiters.splice(0)) { clearTimeout(w.timer); w.resolve(decisionOf(P)); }
   A().renderSaveState();
+  const was = R.shown;
   R.shown = P;
+  settle(was);
   render();
   ME.agent?.changed();
 }
@@ -230,8 +242,10 @@ const canUndo = P => P.entries.length > 0 && P.entries.every((e, k, all) => A().
 let doneTimer = null;
 function hideDone() {
   clearTimeout(doneTimer);
-  if (!R.shown) return;
+  const P = R.shown;
+  if (!P) return;
   R.shown = null;
+  settle(P);
   render();
 }
 function hideLater(ms = SHOW_DONE) { clearTimeout(doneTimer); doneTimer = setTimeout(hideDone, ms); }
@@ -275,6 +289,7 @@ R.drop = (why, { revert = false } = {}) => {
   P.note = `The ${what(P)} was dropped: ${why}.`;
   R.active = null;
   for (const w of P.waiters.splice(0)) { clearTimeout(w.timer); w.resolve(decisionOf(P)); }
+  settle(P);
   render();
 };
 
@@ -297,12 +312,11 @@ R.show = (P, quiet) => {
 };
 
 function marksBox(P) {
-  const g = ME.agentInternals.G();
   let b = null;
   const add = r => { b = b ? [Math.min(b[0], r[0]), Math.min(b[1], r[1]), Math.max(b[2], r[2]), Math.max(b[3], r[3])] : [...r]; };
   for (const m of P.marks) {
     if (m.box) add(m.box);
-    else if (m.mask) { const k = ME.agentInternals.bounds(g, m.mask); if (k.count) add(ME.agentInternals.worldBox(g, k)); }
+    else if (m.area) add(m.area);
   }
   return b;
 }
