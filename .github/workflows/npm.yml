@@ -1,16 +1,23 @@
-# Publishes the MCP server (mcp/, the npm package game-world-painter-mcp) when a version tag v<version> is pushed:
-# the MCP tests first, then npm trusted publishing (OIDC: no token in the repository) with provenance. On npmjs.com
-# the package's trusted publisher is this repository and this workflow (npm.yml). A manual run only does a dry run.
+# The MCP server (mcp/) on npm as game-world-painter-mcp, published from here and never from a computer: when a commit
+# on main has a package version (mcp/package.json) that is not on npm yet, the MCP tests run, the package is published
+# with npm trusted publishing (OIDC: no token anywhere) and provenance, and the commit is tagged v<version> with a
+# GitHub release (the notes: that version in CHANGELOG.md). On npmjs.com the package trusts this workflow (npm.yml).
+# To release: raise the version in mcp/package.json, write the changelog, push to main.
 name: npm
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths: ['mcp/**', 'skills/**', 'docs/project-format.md', 'LICENSE', 'CHANGELOG.md', '.github/workflows/npm.yml']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # the tag and the release
   id-token: write # trusted publishing and provenance
+
+concurrency:
+  group: npm
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -23,13 +30,30 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: npm 11.5.1 or newer (trusted publishing)
         run: npm install -g npm@11
-      - name: The tag is the package version
-        if: github.event_name == 'push'
+      - name: Is this version on npm yet?
+        id: version
         run: |
-          v="v$(node -p "require('./mcp/package.json').version")"
-          if [ "$v" != "$GITHUB_REF_NAME" ]; then echo "The tag $GITHUB_REF_NAME is not the package version $v (mcp/package.json)"; exit 1; fi
+          v="$(node -p "require('./mcp/package.json').version")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if npm view "game-world-painter-mcp@$v" version --json 2>/dev/null | grep -q "\"$v\""; then
+            echo "game-world-painter-mcp@$v is on npm already: nothing to publish (raise the version in mcp/package.json to release)"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Test
+        if: steps.version.outputs.publish == 'true'
         run: node --test mcp/test/*.test.mjs
       - name: Publish
+        if: steps.version.outputs.publish == 'true'
         working-directory: mcp
-        run: npm publish --access public --provenance ${{ github.event_name == 'push' && '' || '--dry-run' }}
+        run: npm publish --access public --provenance
+      - name: Tag and release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v v="$V" 'index($0, "## " v " ") == 1 || $0 == "## " v { f = 1; next } /^## / && f { exit } f' CHANGELOG.md > notes.md
+          printf '\nnpm: https://www.npmjs.com/package/game-world-painter-mcp/v/%s — `npx -y game-world-painter-mcp@%s`\n' "$V" "$V" >> notes.md
+          if gh release view "v$V" >/dev/null 2>&1; then echo "The release v$V exists"; else gh release create "v$V" --target "$GITHUB_SHA" --title "v$V" --notes-file notes.md; fi

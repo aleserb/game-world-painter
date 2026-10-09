@@ -20,9 +20,10 @@ Thanks for helping! Issues and pull requests are welcome.
 
 ## Releasing
 
-1. Move the "Unreleased" notes in `CHANGELOG.md` under the new version, and set the same version in
-   `mcp/package.json`.
-2. Commit, then tag and push: `git tag v0.2.1 && git push origin v0.2.1`.
-3. The `npm` workflow runs the MCP tests and publishes `mcp/` to npm as `game-world-painter-mcp` with provenance
-   (npm trusted publishing: no token; on npmjs.com the package trusts this repository's `npm.yml`). The site deploys
-   from `main` as usual.
+1. Write the notes in `CHANGELOG.md` under `## <version> — <date>`, and set the same version in `mcp/package.json`.
+2. Push to `main` (or merge the pull request). Nothing else: the `npm` workflow sees a version that is not on npm yet,
+   runs the MCP tests, publishes `mcp/` as `game-world-painter-mcp` with provenance, tags the commit `v<version>`
+   and makes a GitHub release with those notes. The site deploys from `main` as usual.
+
+The package is published only from GitHub: npm trusted publishing (OIDC), no token on any computer or in the
+repository. On npmjs.com the package trusts this repository's `npm.yml` (`npm trust list game-world-painter-mcp`).

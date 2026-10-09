@@ -177,5 +177,6 @@ node tests/agent.mjs                the app in headless Chrome + the server + ev
 The tools are declared in [`lib/tools.mjs`](https://github.com/aleserb/game-world-painter/blob/main/mcp/lib/tools.mjs) and implemented in the app (`js/agent-*.js`).
 The package bundles the skill, the project format and the license when it is packed (`scripts/bundle.mjs`).
 
-**Releasing**: set the version in `mcp/package.json` (and the changelog), then push a tag `v<version>` — the
-`npm` workflow tests the package and publishes it to npm with provenance (trusted publishing).
+**Releasing**: raise the version in `mcp/package.json` and write the changelog, push to `main` — the `npm` workflow
+tests the package, publishes it to npm with provenance (trusted publishing, no tokens), tags the commit and makes a
+GitHub release.
