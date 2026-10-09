@@ -175,6 +175,16 @@ try {
   check(cmt.data?.added === 1 && done?.li === 2 && done.bold && /A note for you/.test(done.desc) && /A note for/.test(await ev('ME.agent.log[0].comment')), 'a comment shows on a card and in the Activity', JSON.stringify(done));
   const pos = await ev(`(c => { const a = c.getBoundingClientRect(), s = document.getElementById('stage').getBoundingClientRect(); return [s.right - a.right, a.left - s.left, s.width, a.top - s.top]; })(${cardEl})`);
   check(pos[0] < 24 && pos[1] > pos[2] / 2 && pos[3] < 64, 'the card is at the top right of the map', JSON.stringify(pos));
+  // the card can be dragged by its head to another place; the place is kept
+  const cardXY = `(r => [r.left, r.top])(${cardEl}.getBoundingClientRect())`, xy0 = await ev(cardXY);
+  const grab = await ev(`(r => [r.left + 50, r.top + r.height / 2])(document.querySelector('#ai-proposal .head').getBoundingClientRect())`);
+  const view0 = await ev('[gwp.view.ox, gwp.view.oy]');
+  await mouse('mouseMoved', ...grab); await mouse('mousePressed', ...grab);
+  for (let k = 1; k <= 6; k++) await mouse('mouseMoved', grab[0] - 50 * k, grab[1] + 30 * k);
+  await mouse('mouseReleased', grab[0] - 300, grab[1] + 180); await sleep(150);
+  const xy1 = await ev(cardXY), kept = await ev(`JSON.parse(localStorage.getItem('gwp-ai-card') || 'null')`);
+  check(Math.abs(xy1[0] - (xy0[0] - 300)) < 2 && Math.abs(xy1[1] - (xy0[1] + 180)) < 2 && kept?.x > 0 && JSON.stringify(await ev('[gwp.view.ox, gwp.view.oy]')) === JSON.stringify(view0),
+    'the card can be dragged to another place (the map does not move)', `${JSON.stringify(xy0)} -> ${JSON.stringify(xy1)} kept ${JSON.stringify(kept)}`);
   await cardBtn('Undo');
   check((await ev(nNotes)) === notes0 && !(await ev(`!!${cardEl}`)), 'Undo on the card undoes the change');
   // several calls as one change: begin_change … end_change is one undo step
@@ -183,6 +193,11 @@ try {
   const g2 = await call('add_items', { layer: 'notes', items: [{ x: 6, z: 6, text: 'g' }], comment: 'first' });
   await call('paint_layer', { layer: 'bushes', region: { circle: [6, 6, 4] }, value: 80 });
   const openCls = await ev(`${cardEl}?.className`), openLis = await ev(`${cardEl}?.querySelectorAll('.changes > li').length`);
+  const xy2 = await ev(cardXY);
+  check(Math.abs(xy2[0] - xy1[0]) < 2 && Math.abs(xy2[1] - xy1[1]) < 2, 'the next card comes where the user put it', `${JSON.stringify(xy2)} vs ${JSON.stringify(xy1)}`);
+  await ev(`document.querySelector('#ai-proposal .head').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); true`);
+  const xy3 = await ev(`(c => { const a = c.getBoundingClientRect(), st = document.getElementById('stage').getBoundingClientRect(); return [st.right - a.right, a.top - st.top]; })(${cardEl})`);
+  check(xy3[0] < 24 && xy3[1] < 64 && (await ev(`localStorage.getItem('gwp-ai-card')`)) === null, 'a double-click on its head puts it back in the corner', JSON.stringify(xy3));
   const g4 = await call('end_change', { summary: 'Done: a note and bushes' });
   const top = await ev('gwp.history.undo.at(-1).label'), u1 = await ev('gwp.history.undo.length'), doneDesc = await ev(`${cardEl}?.querySelector('.desc')?.textContent`);
   check(g1.data?.status === 'open' && g1.data.review_mode === false && g2.data?.change?.status === 'open' && openCls === 'open' && openLis === 2
@@ -290,7 +305,15 @@ try {
   // maps by path: the agent creates and opens maps; the app reads and writes them through the MCP server
   const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gwp-e2e-')));
   const newMap = path.join(tmpRoot, 'new-world');
+  // a proposal still waiting when the agent opens another map: undone, not saved into the old map
+  await ev(`ME.agent.settings.review = true; true`);
+  const pd = call('add_items', { layer: 'notes', items: [{ x: 7, z: 7, text: 'never accepted' }] });
+  await until(`(${card})?.status === 'pending'`, 8000);
+  await ev(`ME.agent.settings.review = false; true`);
   const cm = await call('create_map', { path: newMap, title: 'New world', width: 200, cell: 0.5 });
+  const pdr = await pd, oldNotes = await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo-island');
+    return (await (await (await d.getDirectoryHandle('layers')).getFileHandle('notes.json')).getFile()).text(); })()`);
+  check(pdr.data?.proposal?.status === 'dropped' && !oldNotes.includes('never accepted') && oldNotes.includes('Village square'), 'a waiting proposal is undone (not saved) when the agent opens another map', JSON.stringify(pdr.data?.proposal || pdr.error));
   check(cm.data?.created === newMap && fs.existsSync(path.join(newMap, 'metadata.json')) && (await ev('gwp.S.project?.title')) === 'New world'
     && (await ev('gwp.folder instanceof ME.RemoteFolder')) && (await ev('gwp.S.layers.length')) === cm.data.layers.length && cm.data.cells[0] === 400,
   'create_map: a new map on the disk, open in the app', cm.error || JSON.stringify(cm.data).slice(0, 200));

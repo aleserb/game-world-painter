@@ -245,11 +245,16 @@ function removeFromHistory(entries) {
   h.redo = h.redo.filter(e => !set.has(e));
 }
 
-/** The map was opened again (or another one): the change cannot be applied any more. */
-R.drop = why => {
+/** The map was opened again (or another one): the change cannot be applied any more. revert: the map is still
+ *  open (it is saved next): a proposal nobody accepted is undone first. */
+R.drop = (why, { revert = false } = {}) => {
   hideDone();
   const P = R.active;
   if (!P) return;
+  if (revert && P.review) {
+    if (!P.before) revertEntries(P.entries); else removeFromHistory(P.entries);
+    A().afterHistory();
+  }
   P.status = 'dropped';
   P.note = `The ${what(P)} was dropped: ${why}.`;
   R.active = null;
@@ -389,6 +394,55 @@ function inline(s) {
 
 let card = null, changing = false, draft = '', shownFor = null;
 
+// The card can be dragged by its head to another place over the map; the place is kept in this browser (double-click
+// the head: back to the top right corner). It always stays inside the map.
+const POS_KEY = 'gwp-ai-card';
+let pos = (() => { try { const p = JSON.parse(localStorage.getItem(POS_KEY)); return p && isFinite(p.x) && isFinite(p.y) ? p : null; } catch { return null; } })();
+
+function placeCard() {
+  if (!card) return;
+  if (!pos) { card.style.left = card.style.top = card.style.right = card.style.maxHeight = ''; return; }
+  const st = card.parentElement.getBoundingClientRect(), head = card.querySelector('.head')?.offsetHeight || 24;
+  const x = Math.max(0, Math.min(st.width - card.offsetWidth, pos.x)), y = Math.max(0, Math.min(st.height - head - 18, pos.y));
+  Object.assign(card.style, { left: `${x}px`, top: `${y}px`, right: 'auto', maxHeight: `${Math.max(head + 18, st.height - y - 8)}px` });
+}
+
+function dragCard(e) {
+  if (e.button !== 0 || !e.target.closest('.head') || e.target.closest('button')) return;
+  e.preventDefault();
+  const st = card.parentElement.getBoundingClientRect(), r = card.getBoundingClientRect(), off = [e.clientX - r.left, e.clientY - r.top];
+  const [x0, y0] = [e.clientX, e.clientY];
+  let moved = false;
+  const move = ev => {
+    if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return; // a click, not a drag
+    moved = true;
+    card?.classList.add('dragging');
+    pos = { x: ev.clientX - st.left - off[0], y: ev.clientY - st.top - off[1] };
+    placeCard();
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    if (!card || !moved) return;
+    card.classList.remove('dragging');
+    pos = { x: parseFloat(card.style.left), y: parseFloat(card.style.top) }; // where it is seen
+    localStorage.setItem(POS_KEY, JSON.stringify(pos));
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+}
+
+let stageWatch = null; // the map gets bigger or smaller (window, panels): the card stays inside
+
+function resetCard(e) {
+  if (!e.target.closest('.head') || e.target.closest('button')) return;
+  pos = null;
+  localStorage.removeItem(POS_KEY);
+  placeCard();
+}
+
 function render() {
   const P = R.active || R.shown;
   if (!P) { card?.remove(); card = null; changing = false; draft = ''; shownFor = null; ME.app?.requestRender(); return; }
@@ -396,6 +450,9 @@ function render() {
     card = el('div', { id: 'ai-proposal' });
     document.getElementById('stage').append(card);
     for (const t of ['pointerdown', 'wheel', 'keydown']) card.addEventListener(t, e => e.stopPropagation());
+    card.addEventListener('pointerdown', dragCard);
+    card.addEventListener('dblclick', resetCard);
+    if (!stageWatch) (stageWatch = new ResizeObserver(() => placeCard())).observe(card.parentElement);
     card.addEventListener('pointerenter', () => { if (card.classList.contains('done')) clearTimeout(doneTimer); });
     card.addEventListener('pointerleave', () => { if (card.classList.contains('done')) hideLater(8000); });
   }
@@ -412,7 +469,7 @@ function render() {
   const undoable = done && canUndo(P);
   card.className = `${pending ? 'pending' : done ? 'done' : 'open'}${P.review ? ' review' : ''}`;
   card.replaceChildren(...[
-    el('div', { class: 'head' }, el('span', { class: `led ${pending ? 'review' : done ? 'on' : 'busy'}` }), el('b', {}, P.review ? 'AI proposal' : 'AI change'),
+    el('div', { class: 'head', title: 'Drag to move the card; double-click: back to the corner' }, el('span', { class: `led ${pending ? 'review' : done ? 'on' : 'busy'}` }), el('b', {}, P.review ? 'AI proposal' : 'AI change'),
       el('span', { class: 'muted' }, `· ${P.client}${state}`), el('span', { class: 'spacer' }),
       P.marks.length ? el('button', { type: 'button', class: 'ibtn', title: 'Show it on the map', onclick: () => R.show(P) }, ME.icon('crosshair')) : null,
       done ? el('button', { type: 'button', class: 'ibtn', title: 'Close', onclick: hideDone }, ME.icon('x')) : null),
@@ -438,6 +495,7 @@ function render() {
             pending ? btn('Change…', '', () => { changing = true; render(); card.querySelector('textarea')?.focus(); }, 'Undo it and tell the agent what to do instead') : null,
             pending ? btn('Accept', 'primary accept', () => decide(P, 'accepted'), 'Keep it: it is saved') : null),
   ].filter(Boolean));
+  placeCard();
   ME.app?.requestRender();
 }
 R.render = render;

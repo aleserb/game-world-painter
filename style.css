@@ -419,7 +419,9 @@ table.keys td { padding: 2.25px 0; }
 }
 #ai-proposal.open { border-color: rgba(178, 120, 255, 0.55); }
 #ai-proposal.done { border-color: rgba(76, 195, 138, 0.55); }
-#ai-proposal .head { display: flex; align-items: center; gap: 6px; }
+#ai-proposal .head { display: flex; align-items: center; gap: 6px; cursor: grab; user-select: none; touch-action: none; }
+#ai-proposal.dragging, #ai-proposal.dragging .head { cursor: grabbing; }
+#ai-proposal.dragging { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); }
 #ai-proposal .head .spacer { flex: 1; }
 #ai-proposal .title { font-weight: 600; line-height: 1.35; }
 #ai-proposal .desc { color: var(--text); opacity: 0.88; max-height: 180px; overflow: auto; line-height: 1.4; flex-shrink: 0; }

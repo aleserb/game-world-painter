@@ -94,7 +94,7 @@ The server also offers the skill and the [project format](../docs/project-format
   `https://aleserb.github.io/game-world-painter/?mcp=<port>&map=<path>` (the app on that link turns AI Agent on with
   this local server and waits for the map). After a reload the app opens the map again once the server is connected.
 - **Changes on a card**: `begin_change` … `end_change` groups calls; a call alone is a change too. The card at the top
-  right of the map shows the agent's title, description or summary, and each step with its `comment` (lines,
+  right of the map (the user can drag it elsewhere) shows the agent's title, description or summary, and each step with its `comment` (lines,
   `- ` lists, `**bold**`, `` `code` ``).
 - **Review mode** (AI Agent → Settings → *Review the agent's changes*, on by default): a change is applied but held — shown on the map
   with the card (title, what changed, Before / After), not saved, its layers locked for the user — until the user

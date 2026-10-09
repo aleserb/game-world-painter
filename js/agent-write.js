@@ -235,9 +235,13 @@ T.undo = (args, ctx) => {
 /** Saves the open map before another one opens; fails when that is not possible. */
 async function saveOpenMap() {
   const app = A();
-  if (ME.agentReview?.active) ME.agentReview.drop('the agent opened another map');
+  if (ME.agentReview?.active) ME.agentReview.drop('the agent opened another map (the proposal was undone)', { revert: true });
   if (app.folder && app.S.project && app.anyDirty()) {
-    await app.save({ auto: true });
+    // a save may be running (autosave): wait for it, then save what is left
+    for (let k = 0, end = Date.now() + 15000; k < 4 && app.anyDirty() && Date.now() < end; k++) {
+      while (app.saving && Date.now() < end) await new Promise(r => setTimeout(r, 50));
+      await app.save({ auto: true });
+    }
     if (app.anyDirty()) fail(`The map open now ("${app.S.project.title}") has changes the app could not save: ask the user to save it or close it first`);
   }
 }

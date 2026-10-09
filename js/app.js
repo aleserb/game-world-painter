@@ -4114,7 +4114,7 @@ noteEd.querySelector('textarea').addEventListener('keydown', e => {
 
 // What the AI agent (js/agent-tools.js, js/agent.js) works with: the state and the edits with undo.
 ME.app = {
-  S, history, get view() { return view; }, get folder() { return folder; },
+  S, history, get view() { return view; }, get folder() { return folder; }, get saving() { return busy; },
   world, mpp, toCell, layerById, canEdit, editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
   renderAll, renderLayers, renderProps, renderOptions, requestRender, renderSaveState, markMeta, viewChanged,
   insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, mapUnit, fmt, fmtLen,

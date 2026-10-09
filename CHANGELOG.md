@@ -20,7 +20,10 @@
 - `begin_change` … `end_change`: the agent groups several calls into one change with a title, a description and a
   summary — one proposal in review mode, else one undo step. The changing tools take a `comment` (what and why). The
   card at the top right of the map shows the agent's text (lines, lists, bold, code); without review mode it shows a
-  finished change for a while, with Undo. The Activity shows the comments.
+  finished change for a while, with Undo. Drag the card by its head to another place over the map (kept;
+  double-click the head: back to the corner). The Activity shows the comments.
+- Opening another map while a proposal waits undoes it (it is not saved into the old map); `open_map` and
+  `create_map` wait for a running autosave before saving the open map.
 - Select area on layers of objects, notes and paths: rectangle, ellipse, lasso and polygon select the items in the
   shape (and the area), the magic wand selects the same kind; Shift adds, Alt subtracts, Ctrl+I inverts. The agent
   gets the selection (`get_user_context`: kinds and ids; the region `{"items":"selection"}`).
