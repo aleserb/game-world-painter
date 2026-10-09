@@ -1,7 +1,9 @@
 # The MCP server (mcp/) on npm as game-world-painter-mcp, published from here and never from a computer: when a commit
 # on main has a package version (mcp/package.json) that is not on npm yet, the MCP tests run, the package is published
 # with npm trusted publishing (OIDC: no token anywhere) and provenance, and the commit is tagged v<version> with a
-# GitHub release (the notes: that version in CHANGELOG.md). On npmjs.com the package trusts this workflow (npm.yml).
+# GitHub release (the notes: that version in CHANGELOG.md). On npmjs.com the package trusts this workflow (npm.yml);
+# direct publishing must be allowed there for this configuration — where it only may stage, the version goes to npm's
+# staging queue instead and a maintainer approves it on npmjs.com (2FA).
 # To release: raise the version in mcp/package.json, write the changelog, push to main.
 name: npm
 
@@ -28,8 +30,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: npm 11.5.1 or newer (trusted publishing)
-        run: npm install -g npm@11
+      - name: npm 11.15 or newer (trusted publishing, staged publishing)
+        run: npm install -g npm@^11.15.0
       - name: Is this version on npm yet?
         id: version
         run: |
@@ -45,9 +47,19 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: node --test mcp/test/*.test.mjs
       - name: Publish
+        id: publish
         if: steps.version.outputs.publish == 'true'
         working-directory: mcp
-        run: npm publish --access public --provenance
+        run: |
+          set +e
+          npm publish --access public --provenance 2>&1 | tee ../publish.log
+          status=${PIPESTATUS[0]}
+          set -e
+          [ "$status" = 0 ] && exit 0
+          grep -q "OIDC permission denied" ../publish.log || exit "$status"
+          echo "::warning title=Staged, not published::The trusted publisher of game-world-painter-mcp on npmjs.com may only stage. The version goes to the staging queue: approve it at https://www.npmjs.com/package/game-world-painter-mcp (Versions → Staged) or with npm stage approve <id>. To publish without approval: allow direct publishing in the package's trusted publisher settings."
+          npm stage publish --access public --provenance
+          echo "staged=true" >> "$GITHUB_OUTPUT"
       - name: Tag and release
         if: steps.version.outputs.publish == 'true'
         env:
@@ -56,4 +68,5 @@ jobs:
         run: |
           awk -v v="$V" 'index($0, "## " v " ") == 1 || $0 == "## " v { f = 1; next } /^## / && f { exit } f' CHANGELOG.md > notes.md
           printf '\nnpm: https://www.npmjs.com/package/game-world-painter-mcp/v/%s — `npx -y game-world-painter-mcp@%s`\n' "$V" "$V" >> notes.md
+          if [ "${{ steps.publish.outputs.staged }}" = true ]; then printf '\n(Staged on npm: installable once a maintainer approves it on npmjs.com.)\n' >> notes.md; fi
           if gh release view "v$V" >/dev/null 2>&1; then echo "The release v$V exists"; else gh release create "v$V" --target "$GITHUB_SHA" --title "v$V" --notes-file notes.md; fi
