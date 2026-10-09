@@ -106,9 +106,13 @@ the server opens the app in the browser if needed, and the app reads and writes 
 1. Add the server to your agent once, e.g. `claude mcp add --scope user game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs`
    (`node mcp/server.mjs setup` prints the command for each agent; details in [mcp/README.md](mcp/README.md)).
 2. In the app, turn on **AI Agent** in the header: the LED turns green when an agent is connected, and its dialog
-   shows the setup for each agent, the activity and the settings (read only, confirm deletions, **review mode**: each
-   change of the agent is a proposal you accept, send back with a comment, or reject).
-3. Ask, e.g. *“Place chests along the trails, at least 20 m apart”* or *“Find where the player can get stuck and fix it”*.
+   shows the setup for each agent, the activity and the settings (read only, confirm deletions, **review mode** — on by
+   default: each change of the agent is a proposal you accept, send back with a comment, or reject). The agent's
+   changes show on a card at the top right of the map, with its title, explanation and a comment per step.
+3. Point at what you mean: select objects (click, box, or the Select area tools — rectangle, ellipse, lasso, polygon,
+   same kind) or an area; the agent sees the selection.
+4. Ask, e.g. *“Place chests along the trails, at least 20 m apart”*, *“Make these houses ruins”* or *“Find where the
+   player can get stuck and fix it”*.
 
 The agent skill in [`skills/game-world-painter`](skills/game-world-painter) teaches agents the workflow (install with
 `gh skill install aleserb/game-world-painter game-world-painter`, or download it from the AI Agent dialog).

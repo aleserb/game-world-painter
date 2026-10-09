@@ -8,6 +8,7 @@ const point = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems:
 
 export const REGION_DOC = `A region (where) is an object, one of:
 {"area":"map"|"selection"|"view"} — selection: the area the user selected in the app (else their selected objects);
+{"items":"selection"} — the shapes of the items the user selected;
 {"rect":[x0,z0,x1,z1]}; {"circle":[x,z,r]}; {"polygon":[[x,z],...]};
 {"zone":"village"} — a class of the zones layer (a categories layer named zones);
 {"layer":"ground","class":"rock"} (or "class":["rock","sand"]) — cells of categories classes;
@@ -64,7 +65,7 @@ export const TOOLS = [
   {
     name: 'get_user_context',
     title: 'What the user selected',
-    description: 'What the user is pointing at now: the selected area (its bounds and size), the selected items, the selected layers, the active layer and tool, the view and the cursor. Use it for requests like "this area", "here", "the selected ones".',
+    description: 'What the user is pointing at now: the selected area (its bounds and size), the selected items (their layer, kinds, ids), the selected layers, the active layer and tool, the view, the cursor, and what became of your latest changes. The user selects objects with Select (click, box) or the Select area tools (rectangle, ellipse, lasso, polygon, same kind) to show you what they mean. Use it for requests like "this area", "here", "these", "the selected ones".',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: ro,
   },
@@ -395,17 +396,17 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'begin_proposal',
-    title: 'Start a proposal (review mode)',
-    description: 'In review mode (get_map_info → review_mode on), every change is a proposal the user accepts, asks to change or rejects. To show several related changes as one proposal, call begin_proposal, make the changes (they apply at once, held until the user decides), then submit_proposal. Without it each changing call is its own proposal and waits for the decision. Returns nothing to do when review mode is off.',
-    inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'What the user is asked to review, e.g. "Abandoned village: ruins, rubble, overgrowth"' }, description: { type: 'string', description: 'Why and how, briefly' } }, required: ['title'], additionalProperties: false },
+    name: 'begin_change',
+    title: 'Start a change of several steps',
+    description: 'Groups the next changing calls into one change the user sees on a card over the map with your title and description, until end_change. In review mode (get_map_info → review_mode on, the default) it is one proposal: the steps apply at once but are held until the user accepts, asks for changes or rejects it all. Without review mode it becomes one undo step. Use it whenever one idea takes more than one call (e.g. ruins + rubble + overgrowth). Without it each changing call is its own change (in review mode: its own proposal, which waits for the decision).',
+    inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'What the change is, e.g. "Abandoned village: ruins, rubble, overgrowth"' }, description: { type: 'string', description: 'For the user: what and why, briefly. Lines, "- " lists, **bold** and `code` show as such' } }, required: ['title'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
-    name: 'submit_proposal',
-    title: 'Submit the proposal for review',
-    description: 'Shows the open proposal to the user and waits for the decision (up to "wait" seconds): accepted (kept and saved), changes_requested (undone; "feedback" says what the user wants instead: make a new proposal), rejected (undone), or pending (call wait_for_review).',
-    inputSchema: { type: 'object', properties: { summary: { type: 'string', description: 'What you did and why, for the user' }, wait: { type: 'integer', minimum: 0, maximum: 110, description: 'Seconds to wait for the decision (default 45)' } }, additionalProperties: false },
+    name: 'end_change',
+    title: 'Finish the change (review mode: submit it)',
+    description: 'Ends the change opened with begin_change. In review mode it shows the proposal to the user and waits for the decision (up to "wait" seconds): accepted (kept and saved), changes_requested (undone; "feedback" says what the user wants instead: make a new change), rejected (undone), or pending (call wait_for_review). Without review mode the change is applied as one undo step (status done).',
+    inputSchema: { type: 'object', properties: { summary: { type: 'string', description: 'For the user: what you did and why (replaces the description). Lines, "- " lists, **bold** and `code` show as such' }, title: { type: 'string', description: 'A better title, if the change turned out different' }, wait: { type: 'integer', minimum: 0, maximum: 110, description: 'Review mode: seconds to wait for the decision (default 45)' } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
@@ -424,6 +425,12 @@ export const TOOLS = [
   },
 ];
 
+/** Changing tools take "comment": the agent's words on the change, shown to the user with it. */
+export const COMMENT = { type: 'string', maxLength: 4000, description: 'For the user: what this change does and why, in a sentence or two. Shown with the change in the app (the proposal card in review mode, a card otherwise, the Activity)' };
+for (const t of TOOLS) {
+  if (['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route'].includes(t.name)) t.inputSchema.properties.comment = COMMENT;
+}
+
 /** Tools that the server runs itself (with help from the app), not the page. */
 export const SERVER_TOOLS = new Set(['get_project_path', 'open_map', 'create_map']);
 
@@ -431,16 +438,17 @@ export const SERVER_TOOLS = new Set(['get_project_path', 'open_map', 'create_map
 export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 
 /** Tool calls that may wait for the user (a confirmation, a proposal under review): a longer timeout. */
-export const SLOW_TOOLS = new Set(['open_map', 'create_map', 'delete_items', 'submit_proposal', 'wait_for_review', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
+export const SLOW_TOOLS = new Set(['open_map', 'create_map', 'delete_items', 'end_change', 'wait_for_review', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
 
 export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world seen from above, open in the user's browser. You read it and change it through these tools; every change appears at once in the app, and the user can undo it (Ctrl+Z).
 
-- Start with get_map_info (layers, unit, zones) and get_user_context ("this area" means the user's selected area: {"area":"selection"}).
+- Start with get_map_info (layers, unit, zones) and get_user_context ("this area" means the user's selected area: {"area":"selection"}; "these" the selected items: {"items":"selection"} or their ids).
 - get_project_path gives the folder of the map on disk (metadata.json, the layer PNG and JSON files) for work with files and scripts.
 - open_map opens a map by its folder path, create_map makes a new one; when the app is not open, the server opens it in the browser.
 - Look with render_map; measure with describe_region, find_items, find_spots, analyze_items, analyze_walkability, find_route.
-- Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch: each call is one undo step.
+- Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch. Give each change a "comment" for the user (what and why); the app shows it with the change.
+- Several calls for one idea: begin_change (title, description) → the calls → end_change (summary). The user sees it as one change (one undo step, or one proposal in review mode).
 - ${REGION_DOC.replace(/\n/g, '\n  ')}
 - x grows east, z grows south (north is up); lengths are in the unit of the map. Keep what the user made unless asked; respect locked layers.
-- Review mode (get_map_info → review_mode): your changes are proposals. A changing call waits for the user's decision (up to 45 s; then wait_for_review): accepted — keep going; changes_requested — it was undone, redo it following "feedback"; rejected — it was undone, do not repeat it. Group related changes into one proposal with begin_proposal … submit_proposal.
+- Review mode (get_map_info → review_mode, on by default): your changes are proposals. A changing call (or end_change) waits for the user's decision (up to 45 s; then wait_for_review): accepted — keep going; changes_requested — it was undone, redo it following "feedback"; rejected — it was undone, do not repeat it.
 - After changing, check the result (describe_region or render_map), then show_on_map what you did and leave notes (add_items on a notes layer) to explain choices when useful.`;

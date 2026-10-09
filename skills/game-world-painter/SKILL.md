@@ -21,6 +21,9 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
   - **vector**: paths (roads, rivers, borders) as `points` `[x, z]` or `[x, z, width]`, smooth or straight, `closed` paths are areas.
 - **Coordinates**: x grows east, z grows south (north is up). Lengths are in the map's unit (meters unless `get_map_info` says otherwise): scale your numbers to it.
 - **Zones** are classes of a categories layer named zones. **The selected area** is what the user selected in the app.
+- **The user's selection** shows what they mean: they select objects with a click, a box, or the Select area tools
+  (rectangle, ellipse, lasso, polygon, same kind). `get_user_context` gives the selected items (layer, kinds, ids) and
+  the selected area; use `{"items": "selection"}` and `{"area": "selection"}` as regions.
 - **Locked layers** cannot be changed: ask the user to unlock them.
 
 ## How to work
@@ -29,7 +32,7 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
    `open_map {"path": …}`; for a new world use `create_map` (path, title, unit, size, cell, layers). The server opens the
    app in the browser when it is not open.
 1. **Orient.** Call `get_map_info` (layers, kinds, property keys, zones, unit) and `get_user_context` when the request says
-   "this", "here", "selected". Learn the conventions of *this* map — the kinds and property keys already used
+   "this", "here", "these", "selected". Learn the conventions of *this* map — the kinds and property keys already used
    (e.g. enemies as one object per pack with `props.pack_size`) — and follow them.
 2. **Look and measure before changing.** `render_map` the area (with `highlight` for the region you mean),
    `describe_region` for its facts, `find_items` / `analyze_items` for what is placed, `find_spots`,
@@ -41,6 +44,9 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
    groups, keep-away distances), `paint_layer` with `feather` and `noise` for natural masks, `edit_terrain` for heights,
    `add_items` / `update_items` / `delete_items` for exact edits, `create_layer` when a new kind of data needs its own layer.
    Use `dry_run` on `scatter_items` when you are unsure.
+   Give every changing call a `comment` for the user — what it does and why, in a sentence or two; the app shows it with
+   the change. When one idea takes several calls, wrap them: `begin_change` (a clear title and description) → the calls
+   → `end_change` (a short summary). The user sees one change (one undo step, or one proposal in review mode).
 5. **Check.** `describe_region` / `analyze_items` / `render_map` again: counts, spacing, coverage, nothing on roads or water.
    Fix what is off (`undo` your last step if it went wrong).
 6. **Files on disk, when tools are not enough.** `get_project_path` gives the folder of the map on this computer and
@@ -52,13 +58,16 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
 
 ## Review mode
 
-When `get_map_info` says `review_mode: on`, every change is a **proposal** the user reviews on the map:
+Review mode is on by default. When `get_map_info` says `review_mode: on`, every change is a **proposal** the user
+reviews on the map:
 - A changing call applies at once (the user sees it) but waits for the decision, up to 45 s: `accepted` (kept and
   saved), `changes_requested` (undone; read `feedback` and make a new proposal that follows it), `rejected` (undone;
   do not repeat it), or `pending` (call `wait_for_review` until decided).
-- Group the steps of one idea into one proposal: `begin_proposal` (a clear title and why) → the changes →
-  `submit_proposal` (a short summary). Keep proposals small enough to judge at a glance.
+- Group the steps of one idea into one proposal: `begin_change` (a clear title and why) → the changes (each with a
+  `comment`) → `end_change` (a short summary; it waits for the decision). Keep proposals small enough to judge at a glance.
+- Titles, descriptions, summaries and comments are shown as written: lines, `- ` lists, `**bold**` and `` `code` ``.
 - While a proposal waits, make no other changes; reading and looking are fine. `undo` withdraws your proposal.
+- `get_user_context` → `your_recent_changes` tells what became of your latest changes (e.g. the user undid one).
 
 ## Principles
 

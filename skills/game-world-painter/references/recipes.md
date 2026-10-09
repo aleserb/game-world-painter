@@ -87,12 +87,17 @@ Fix them by connecting pockets (`edit_terrain` to lower or smooth a slope, `pain
    - roads with `find_route` between buildings;
    - lamps with `scatter_items` along roads (region near roads, spacing 15–25).
 
-**An abandoned village**:
-1. Run `find_items` on the village buildings.
-2. Delete a part with `delete_items`, chosen by the user's wish or randomly. Or change some to ruins with `update_items` (kind, props).
-3. Add `scatter_items` of rocks and debris near the ruins.
-4. Overgrow with `paint_layer` (bushes and grass `"mode":"max"` with noise, also on roads).
-5. Explain the result with notes.
+**An abandoned village** (several steps: one change):
+1. Run `find_items` on the village buildings (or the ones the user selected: `get_user_context`).
+2. `begin_change` with a title ("Abandoned village: ruins, rubble, overgrowth") and why.
+3. Delete a part with `delete_items`, chosen by the user's wish or randomly. Or change some to ruins with `update_items` (kind, props).
+4. Add `scatter_items` of rocks and debris near the ruins.
+5. Overgrow with `paint_layer` (bushes and grass `"mode":"max"` with noise, also on roads).
+6. `end_change` with a summary in numbers; each step above with a `comment`. Explain lasting reasons with notes.
+
+**Do something with the objects the user selected** ("make these birches", "move these to the river"):
+1. `get_user_context` → `selected_items` (layer, kinds, ids; all ids when there are many).
+2. Change them by id (`update_items`, `delete_items`), or use `{"items": "selection"}` / `{"area": "selection"}` as a region.
 
 **Points of interest worth showing**:
 - `find_spots` `high` gives viewpoints, `enclosed` gives hidden places, `open` gives clearings, and `far_from` the roads gives remote places.

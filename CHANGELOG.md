@@ -14,9 +14,16 @@
 - `open_map` and `create_map`: the agent opens a map by its folder path or makes a new one; the app reads and writes
   it through the local MCP server (only folders the agent opened, only for the connected tab), and the server opens the
   app in the browser (`?mcp=<port>&map=<path>`) when none is connected. Such a map opens again after a reload.
-- Review mode for AI agents (AI Agent → Settings): the agent's changes become proposals on the map — Accept, Change…
-  (with a comment for the agent) or Reject, with Before / After; held (not saved, locked) until decided. Tools
-  `begin_proposal`, `submit_proposal`, `wait_for_review`.
+- Review mode for AI agents (AI Agent → Settings, on by default): the agent's changes become proposals on the map —
+  Accept, Change… (with a comment for the agent) or Reject, with Before / After; held (not saved, locked) until
+  decided; an accepted proposal is one undo step. Tool `wait_for_review`.
+- `begin_change` … `end_change`: the agent groups several calls into one change with a title, a description and a
+  summary — one proposal in review mode, else one undo step. The changing tools take a `comment` (what and why). The
+  card at the top right of the map shows the agent's text (lines, lists, bold, code); without review mode it shows a
+  finished change for a while, with Undo. The Activity shows the comments.
+- Select area on layers of objects, notes and paths: rectangle, ellipse, lasso and polygon select the items in the
+  shape (and the area), the magic wand selects the same kind; Shift adds, Alt subtracts, Ctrl+I inverts. The agent
+  gets the selection (`get_user_context`: kinds and ids; the region `{"items":"selection"}`).
 - `get_project_path`: the full path of the map's folder on disk and of its layer files. The server finds the folder
   (workspace roots, working directory, home) by the app's fingerprint of it; the app remembers and shows the path.
 - Vector layers: roads, rivers, borders as smooth or straight lines through points (a width per point, closed

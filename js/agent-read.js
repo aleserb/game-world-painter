@@ -76,8 +76,8 @@ T.get_map_info = () => {
       zones: Z ? { layer: Z.id, names: Z.meta.classes.slice(1).map(c => c.name) } : null,
       folder: { name: A().folder?.name || null, path: S.projectPath || null, note: 'get_project_path finds the full path on disk' },
       review_mode: ME.agent?.settings.review && ME.agent.settings.canWrite
-        ? 'on: your changes are proposals the user accepts, asks to change (with feedback) or rejects; group related changes with begin_proposal … submit_proposal'
-        : 'off: your changes apply directly',
+        ? 'on: your changes are proposals the user accepts, asks to change (with feedback) or rejects; group related changes with begin_change … end_change'
+        : 'off: your changes apply directly; group related changes with begin_change … end_change (one undo step)',
       can_write: !!ME.agent?.settings.canWrite,
       user: userContext(g, true),
     },
@@ -97,9 +97,15 @@ function userContext(g, short = false) {
     o.selected_area = { rect: worldBox(g, b), area: fmtU(g, S.area.count * g.c * g.c, 0), use: '{"area":"selection"}' };
   } else o.selected_area = null;
   if (S.sel.layer && S.sel.ids.size) {
-    const items = S.sel.layer.items.filter(i => S.sel.ids.has(i.id));
-    o.selected_items = { layer: S.sel.layer.id, count: items.length, items: items.slice(0, short ? 10 : 100).map(it => brief(S.sel.layer, it, g)) };
+    const L = S.sel.layer, items = L.items.filter(i => S.sel.ids.has(i.id)), kinds = {};
+    for (const it of items) { const k = it.kind ?? (L.type === 'notes' ? 'note' : '?'); kinds[k] = (kinds[k] || 0) + 1; }
+    o.selected_items = {
+      layer: L.id, count: items.length, kinds, use: '{"items":"selection"} (a region), or their ids',
+      items: items.slice(0, short ? 10 : 100).map(it => brief(L, it, g)),
+      ...(items.length > (short ? 10 : 100) && !short ? { ids: items.slice(0, 5000).map(i => i.id) } : {}),
+    };
   } else o.selected_items = null;
+  if (!short && ME.agentReview?.list.length) o.your_recent_changes = ME.agentReview.recent();
   if (!short) o.cursor = S.cursor ? [r2(S.cursor[0]), r2(S.cursor[1])] : null;
   return o;
 }

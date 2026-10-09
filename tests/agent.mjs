@@ -17,7 +17,7 @@ const check = (ok, what, detail = '') => {
 
 const port = await freePort();
 const mcp = startStdio(port, [], { GWP_MCP_WAIT_APP_MS: '3000' });
-const b = await openBrowser({ localStorage: { 'gwp-agent': JSON.stringify({ enabled: true, url: `http://127.0.0.1:${port}`, confirmDeletes: true }) } });
+const b = await openBrowser({ localStorage: { 'gwp-agent': JSON.stringify({ v: 2, enabled: true, url: `http://127.0.0.1:${port}`, confirmDeletes: true, review: false }) } });
 const { ev, until } = b;
 
 /** Calls a tool; returns {data, text, images, error}. */
@@ -120,6 +120,80 @@ try {
   const und = await call('undo', { steps: 2 });
   check(und.data?.undone?.[0]?.startsWith('AI: delete') && und.data.undone[1]?.startsWith('AI: change layer') && (await ev(`gwp.layerById('ruins').items.length`)) === 2
     && !(await ev(`gwp.layerById('zones').meta.classes.some(c => c.name === 'ruins')`)), 'undo the last agent changes', und.error || JSON.stringify(und.data));
+
+  // selection tools on a layer of objects: a lasso selects the objects in it (and is the selected area); the agent sees both
+  const ui = await ev('ME.UI_SCALE'), vr = await ev(`(r => [r.left, r.top])(document.getElementById('view').getBoundingClientRect())`);
+  const mouse = (type, x, y, modifiers = 0) => b.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, modifiers });
+  const screen = async (x, z) => { const [sx, sy] = await ev(`gwp.view.toScreen(${x}, ${z})`); return [sx * ui + vr[0], sy * ui + vr[1]]; };
+  const dragPath = async (pts, modifiers = 0) => {
+    const sp = [];
+    for (const p of pts) sp.push(await screen(...p));
+    await mouse('mouseMoved', ...sp[0], modifiers); await mouse('mousePressed', ...sp[0], modifiers);
+    for (const p of sp.slice(1)) await mouse('mouseMoved', ...p, modifiers);
+    await mouse('mouseReleased', ...sp.at(-1), modifiers); await sleep(150);
+  };
+  const houses = await ev(`gwp.layerById('buildings').items.map(i => [i.id, i.x, i.z, i.kind])`);
+  const [cx, cz] = [houses[0][1], houses[0][2]], lasso = Array.from({ length: 24 }, (_, k) => [cx + 22 * Math.cos(k / 24 * 2 * Math.PI), cz + 14 * Math.sin(k / 24 * 2 * Math.PI)]);
+  const inLasso = (x, z) => { let c = false; for (let i = 0, j = lasso.length - 1; i < lasso.length; j = i++) { const [xi, zi] = lasso[i], [xj, zj] = lasso[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
+  const want = houses.filter(h => inLasso(h[1], h[2])).map(h => h[0]).sort((a, b) => a - b);
+  await call('show_on_map', { region: { circle: [cx, cz, 30] } });
+  await ev(`gwp.setActive(gwp.layerById('buildings')); gwp.S.brush.area = 'free'; gwp.setTool('area'); ME.app.select(null, []); gwp.setArea(null); true`);
+  const tb = await ev(`[...document.querySelectorAll('#tools .tbtn span')].map(s => s.textContent)`);
+  await dragPath([...lasso, lasso[0]]);
+  const got = await ev(`[...gwp.S.sel.ids].sort((a, b) => a - b)`), hasArea = await ev('!!gwp.S.area');
+  check(tb.includes('Lasso') && want.length >= 2 && JSON.stringify(got) === JSON.stringify(want) && hasArea, 'Select area on objects: the lasso selects the objects in it', `${JSON.stringify(got)} want ${JSON.stringify(want)} area ${hasArea} tools ${tb.join(',')}`);
+  const opts = await ev(`document.getElementById('options').textContent`);
+  check(opts.includes(`${want.length} of ${houses.length}`), 'the options count the selected objects', opts.slice(0, 160));
+  const uc = await call('get_user_context');
+  const kinds = Object.values(uc.data?.selected_items?.kinds || {}).reduce((a, n) => a + n, 0);
+  check(uc.data?.selected_items?.layer === 'buildings' && uc.data.selected_items.count === want.length && kinds === want.length && uc.data.selected_area?.area > 100,
+    'the agent gets the selected objects (kinds) and the area', JSON.stringify(uc.data?.selected_items).slice(0, 200));
+  const its = await call('describe_region', { region: { items: 'selection' } });
+  check(its.data?.items?.buildings?.count === want.length, 'region {"items":"selection"}', its.error || JSON.stringify(its.data?.items?.buildings));
+  // Alt subtracts; the magic wand selects the same kind; a click on nothing deselects
+  const one = houses.find(h => h[0] === want[0]);
+  await dragPath([[one[1] - 3, one[2] - 3], [one[1] + 3, one[2] - 3], [one[1] + 3, one[2] + 3], [one[1] - 3, one[2] + 3], [one[1] - 3, one[2] - 3]], 1); // Alt
+  const less = await ev(`gwp.S.sel.ids.size`);
+  await ev(`gwp.S.brush.area = 'wand'; gwp.setTool('area'); true`);
+  const p0 = await screen(one[1], one[2]);
+  await mouse('mouseMoved', ...p0); await mouse('mousePressed', ...p0); await mouse('mouseReleased', ...p0); await sleep(150);
+  const same = await ev(`gwp.S.sel.ids.size`), sameWant = houses.filter(h => h[3] === one[3]).length;
+  check(less === want.length - 1 && same === sameWant && !(await ev('!!gwp.S.area')), 'Alt subtracts; the magic wand selects the objects of the same kind', `${less} / ${same} of ${sameWant}`);
+  await ev(`gwp.S.brush.area = 'rect'; gwp.setTool('area'); true`);
+  const empty0 = await ev(`(() => { for (let k = 0; k < 40; k++) { const p = gwp.view.toWorld(40 + k * 12, 60); if (!gwp.layerById('buildings').hit(p[0], p[1], gwp.view)) return p; } return null; })()`);
+  const far = await screen(...empty0);
+  await mouse('mouseMoved', ...far); await mouse('mousePressed', ...far); await mouse('mouseReleased', ...far); await sleep(150);
+  check((await ev('gwp.S.sel.ids.size')) === 0, 'a click on nothing deselects');
+  await ev(`gwp.setTool('select'); true`);
+
+  // the agent's words on a change: on a card at the top right of the map (review mode off) and in the Activity
+  const cardEl = `document.getElementById('ai-proposal')`;
+  const cardBtn = text => ev(`(b => (b.click(), true))([...document.querySelectorAll('#ai-proposal button')].find(b => b.textContent.trim() === ${JSON.stringify(text)}))`);
+  const nNotes = `gwp.layerById('notes').items.length`, notes0 = await ev(nNotes);
+  const cmt = await call('add_items', { layer: 'notes', items: [{ x: 5, z: 5, text: 'c' }], comment: 'A note for **you**:\n- one\n- two' });
+  const done = await until(`(c => c && c.classList.contains('done') && { desc: c.querySelector('.desc')?.textContent, li: c.querySelectorAll('.desc li').length, bold: !!c.querySelector('.desc b') })(${cardEl})`, 5000);
+  check(cmt.data?.added === 1 && done?.li === 2 && done.bold && /A note for you/.test(done.desc) && /A note for/.test(await ev('ME.agent.log[0].comment')), 'a comment shows on a card and in the Activity', JSON.stringify(done));
+  const pos = await ev(`(c => { const a = c.getBoundingClientRect(), s = document.getElementById('stage').getBoundingClientRect(); return [s.right - a.right, a.left - s.left, s.width, a.top - s.top]; })(${cardEl})`);
+  check(pos[0] < 24 && pos[1] > pos[2] / 2 && pos[3] < 64, 'the card is at the top right of the map', JSON.stringify(pos));
+  await cardBtn('Undo');
+  check((await ev(nNotes)) === notes0 && !(await ev(`!!${cardEl}`)), 'Undo on the card undoes the change');
+  // several calls as one change: begin_change … end_change is one undo step
+  const sumB = `gwp.layerById('bushes').data.reduce((a, v) => a + v, 0)`, bushes0 = await ev(sumB), u0 = await ev('gwp.history.undo.length');
+  const g1 = await call('begin_change', { title: 'A note and bushes', description: 'Two steps' });
+  const g2 = await call('add_items', { layer: 'notes', items: [{ x: 6, z: 6, text: 'g' }], comment: 'first' });
+  await call('paint_layer', { layer: 'bushes', region: { circle: [6, 6, 4] }, value: 80 });
+  const openCls = await ev(`${cardEl}?.className`), openLis = await ev(`${cardEl}?.querySelectorAll('.changes > li').length`);
+  const g4 = await call('end_change', { summary: 'Done: a note and bushes' });
+  const top = await ev('gwp.history.undo.at(-1).label'), u1 = await ev('gwp.history.undo.length'), doneDesc = await ev(`${cardEl}?.querySelector('.desc')?.textContent`);
+  check(g1.data?.status === 'open' && g1.data.review_mode === false && g2.data?.change?.status === 'open' && openCls === 'open' && openLis === 2
+    && g4.data?.change?.status === 'done' && top === 'AI: A note and bushes' && u1 === u0 + 1 && doneDesc === 'Done: a note and bushes',
+  'begin_change … end_change: one undo step with the agent\'s title and summary', `${JSON.stringify(g4.data || g4.error)} ${top} ${u0}->${u1} ${openCls} ${openLis}`);
+  await ev('gwp.undo(); true');
+  check((await ev(nNotes)) === notes0 && (await ev(sumB)) === bushes0, 'it is undone in one step');
+  const empty = await call('begin_change', { title: 'Nothing' });
+  const e2 = await call('end_change', {});
+  check(empty.data?.status === 'open' && e2.data?.change?.status === 'empty', 'a change with nothing in it closes', JSON.stringify(e2.data || e2.error));
+
   // errors are explained to the agent
   const locked = await ev(`(gwp.layerById('water').meta.locked = true, true)`);
   const lk = await call('paint_layer', { layer: 'water', region: { circle: [0, 0, 5] }, value: 100 });
@@ -134,14 +208,15 @@ try {
   await ev(`ME.agent.settings.review = true; true`);
   const rv = await call('get_map_info');
   check(/^on/.test(rv.data?.review_mode || ''), 'get_map_info says review mode is on', rv.data?.review_mode);
-  const card = `(c => c && { status: c.className, title: c.querySelector('.title')?.textContent, changes: c.querySelectorAll('.changes li').length })(document.getElementById('ai-proposal'))`;
+  const card = `(c => c && { status: c.className.split(' ')[0], title: c.querySelector('.title')?.textContent, changes: c.querySelectorAll('.changes li').length })(document.getElementById('ai-proposal'))`;
   const click = (text, sel = '#ai-proposal button') => ev(`(b => (b.click(), true))([...document.querySelectorAll(${JSON.stringify(sel)})].find(b => b.textContent.trim() === ${JSON.stringify(text)}))`);
   const chests = `gwp.layerById('chests').items.length`, stamp = f => ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo-island');
     const f = await (await (await d.getDirectoryHandle('layers')).getFileHandle(${JSON.stringify(f)})).getFile(); return f.lastModified + ':' + f.size; })()`);
   await until(`!gwp.S.layers.some(l => l.dirty)`, 8000);
   const n0 = await ev(chests), st0 = await stamp('chests.json');
-  const p1 = call('add_items', { layer: 'chests', items: [{ kind: 'iron_chest', x: 5, z: 5 }] });
+  const p1 = call('add_items', { layer: 'chests', items: [{ kind: 'iron_chest', x: 5, z: 5 }], comment: 'A chest by the road' });
   const c1 = await until(`(${card})?.status === 'pending' && ${card}`, 8000);
+  check((await ev(`document.querySelector('#ai-proposal .desc')?.textContent`)) === 'A chest by the road', 'review: the agent\'s comment is on the proposal');
   const held = await ev(`ME.agentReview.holds(gwp.layerById('chests')) && ${chests} === ${n0 + 1}`);
   await sleep(1500);
   const unsaved = (await stamp('chests.json')) === st0;
@@ -159,11 +234,11 @@ try {
   const chestId = r1.data.ids[0];
   // a proposal of several changes, sent back with a comment
   const sumBushes = `gwp.layerById('bushes').data.reduce((a, v) => a + v, 0)`, b0 = await ev(sumBushes);
-  const begin = await call('begin_proposal', { title: 'A camp', description: 'Crates and bushes around a fire' });
+  const begin = await call('begin_change', { title: 'A camp', description: 'Crates and bushes around a fire' });
   const part = await call('add_items', { layer: 'chests', items: [{ kind: 'crate', x: 12, z: 8 }, { kind: 'crate', x: 14, z: 9 }] });
   await call('paint_layer', { layer: 'bushes', region: { circle: [12, 10, 6] }, value: 90 });
   const openState = await ev(`(${card})?.status`);
-  const p2 = call('submit_proposal', { summary: 'Two crates and bushes' });
+  const p2 = call('end_change', { summary: 'Two crates and bushes' });
   const c2 = await until(`(${card})?.status === 'pending' && (${card}).changes === 2 && ${card}`, 8000);
   await click('Change…');
   await ev(`(t => { t.value = 'Only one crate, no bushes'; t.dispatchEvent(new Event('input')); return true; })(document.querySelector('#ai-proposal textarea'))`);
@@ -180,9 +255,10 @@ try {
   const r3 = await p3;
   check(r3.data?.proposal?.status === 'rejected' && (await ev(`gwp.layerById('chests').items.find(i => i.id === ${chestId}).kind`)) === 'iron_chest', 'review: rejected (undone)', JSON.stringify(r3.data?.proposal));
   // the user decides later: wait_for_review; meanwhile more changes wait
-  await call('begin_proposal', { title: 'Later' });
+  await call('begin_change', { title: 'Later' });
   await call('add_items', { layer: 'notes', items: [{ x: 1, z: 1, text: 'later' }] });
-  const r4 = await call('submit_proposal', { wait: 1 });
+  await call('add_items', { layer: 'notes', items: [{ x: 1.5, z: 1, text: 'later too' }] });
+  const r4 = await call('end_change', { wait: 1 });
   const blocked = await call('add_items', { layer: 'notes', items: [{ x: 2, z: 2, text: 'more' }] });
   const p5 = call('wait_for_review', { id: r4.data?.proposal?.id, wait: 30 });
   await sleep(300);
@@ -190,8 +266,9 @@ try {
   const r5 = await p5;
   check(r4.data?.proposal?.status === 'pending' && /waiting for the user's review/.test(blocked.error || '') && r5.data?.proposal?.status === 'accepted',
     'review: pending, then wait_for_review; no new changes meanwhile', `${r4.data?.proposal?.status} | ${blocked.error} | ${r5.data?.proposal?.status}`);
+  check((await ev('gwp.history.undo.at(-1).label')) === 'AI: Later', 'review: an accepted proposal is one undo step', await ev('gwp.history.undo.at(-1).label'));
   // the agent withdraws its open proposal
-  await call('begin_proposal', { title: 'Oops' });
+  await call('begin_change', { title: 'Oops' });
   await call('add_items', { layer: 'notes', items: [{ x: 3, z: 3, text: 'oops' }] });
   const notesN = await ev(`gwp.layerById('notes').items.length`);
   const wd = await call('undo');
@@ -232,9 +309,10 @@ try {
   check(await until(`!!window.gwp && gwp.S.project?.title === 'Demo island' && gwp.folder instanceof ME.RemoteFolder && gwp.folder.path === ${JSON.stringify(copy)}`, 20000),
     'after a reload the map opens again through the server');
   // a link of the server turns AI Agent on and says which map comes
-  await ev(`localStorage.setItem('gwp-agent', JSON.stringify({ enabled: false })); true`);
+  await ev(`localStorage.setItem('gwp-agent', JSON.stringify({ enabled: false, review: false })); true`); // saved by an older version
   await b.send('Page.navigate', { url: `${b.origin}/index.html?mcp=${port}&map=${encodeURIComponent(newMap)}` });
   const linked = await until(`!!window.ME?.agent && ME.agent.settings.enabled && ['ready', 'agent'].includes(ME.agent.state) && location.search === '' && document.getElementById('banner').textContent.includes(${JSON.stringify(newMap)})`, 20000);
+  check(await ev('ME.agent.settings.review === true && ME.agent.settings.v === 2'), 'review mode is on by default (also for settings saved before)');
   const om2 = await call('open_map', { path: newMap });
   check(linked && om2.data?.opened === newMap && (await ev('gwp.S.project?.title')) === 'New world', 'a link with ?mcp= connects the app; then open_map opens the map', om2.error || '');
 

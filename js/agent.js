@@ -5,12 +5,17 @@
 'use strict';
 
 const API = 1;
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const KEY = 'gwp-agent';
 const WRITE = new Set(['_create_map', 'add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
-const DEFAULTS = { enabled: false, url: 'http://127.0.0.1:38765', canWrite: true, confirmDeletes: true, highlight: true, review: false };
+const DEFAULTS = { v: 2, enabled: false, url: 'http://127.0.0.1:38765', canWrite: true, confirmDeletes: true, highlight: true, review: true };
 
-const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; } })();
+const settings = (() => {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { /* the defaults */ }
+  if (!(s.v >= 2)) delete s.review; // review mode is on by default since settings v2 (it was off before)
+  return { ...DEFAULTS, ...s, v: DEFAULTS.v };
+})();
 const saveSettings = () => localStorage.setItem(KEY, JSON.stringify(settings));
 
 // A link from the agent's MCP server (open_map, create_map): ?mcp=<port> turns AI Agent on with that local server;
@@ -144,7 +149,8 @@ ME.onProjectOpen = () => {
 // ------------------------------------------------------------------------------------------------ calls
 
 async function run(call) {
-  const entry = { id: call.id, time: new Date(), tool: call.tool, client: call.client?.name || 'agent', args: summarize(call.args), status: 'running' };
+  const comment = typeof call.args?.comment === 'string' ? call.args.comment.trim().slice(0, 4000) : ''; // the agent's words on a change
+  const entry = { id: call.id, time: new Date(), tool: call.tool, client: call.client?.name || 'agent', args: summarize(call.args), comment, status: 'running' };
   agent.log.unshift(entry);
   if (agent.log.length > 200) agent.log.length = 200;
   agent.busy++;
@@ -160,7 +166,7 @@ async function run(call) {
     const ctx = { canWrite: settings.canWrite, confirmDeletes: settings.confirmDeletes && !review, review, client: call.client, clientName: call.client?.name };
     let result;
     if (review && call.tool === 'undo') result = ME.agentReview.withdraw();
-    else if (review && writes && !call.tool.startsWith('_')) ({ result, later } = await ME.agentReview.run(call, () => fn(args, ctx)));
+    else if (writes && call.tool !== 'undo' && !call.tool.startsWith('_')) ({ result, later } = await ME.agentReview.run(call, () => fn(args, ctx), { review, comment }));
     else result = await fn(args, ctx);
     if (result?.deferred) { later = result.deferred; result = null; } // waits for the user's decision
     body = { ok: true, result };

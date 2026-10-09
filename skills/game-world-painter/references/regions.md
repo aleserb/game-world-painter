@@ -20,6 +20,7 @@ Most tools take a `region`: where to look, paint or place. A region is a JSON ob
 | `{"near": [x, z], "distance": 30}` | Within 30 units of a point |
 | `{"near": {"zone": "village"}, "distance": 20}` | Within 20 units of another region |
 | `{"items": {"layer": "buildings", "ids": [3, 4]}}` | The shapes of these items (footprints, closed paths with their inside) |
+| `{"items": "selection"}` | The shapes of the items the user selected in the app |
 | `{"all": [A, B, ...]}` | In every one (intersection) |
 | `{"any": [A, B, ...]}` | In any one (union) |
 | `{"not": A}` | Everywhere but A |

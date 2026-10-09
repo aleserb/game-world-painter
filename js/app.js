@@ -10,6 +10,7 @@ const canvas = $('#view');
 const ctx = canvas.getContext('2d');
 
 const RASTER = ['mask', 'category', 'height'];
+const ITEMS = ['objects', 'notes', 'vector']; // layers of items: Select area selects the items in its shape
 const TOOLS = [
   { id: 'select', key: 'v', name: 'Select', icon: '↖', types: null },
   { id: 'pan', key: 'h', name: 'Pan', icon: '✥', types: null },
@@ -19,7 +20,7 @@ const TOOLS = [
   { id: 'fill', key: 'g', name: 'Fill', icon: '◪', types: ['mask', 'category'] },
   { id: 'shape', key: 'u', name: 'Shapes', icon: '⬠', types: RASTER },
   { id: 'picker', key: 'i', name: 'Pick value', icon: '⊙', types: RASTER },
-  { id: 'area', key: 'l', name: 'Select area', icon: '⬚', types: RASTER, gap: true },
+  { id: 'area', key: 'l', name: 'Select area', icon: '⬚', types: [...RASTER, ...ITEMS], gap: true },
   { id: 'add', key: 'a', name: 'Add object', icon: '✚', types: ['objects'], gap: true },
   { id: 'path', key: 'd', name: 'Path', icon: '〰', types: ['vector'] },
   { id: 'note', key: 'n', name: 'Note', icon: '🗒', types: null },
@@ -544,8 +545,9 @@ async function save({ auto = false } = {}) {
 // --- watching the folder
 
 function dropHistory(layer) {
-  history.undo = history.undo.filter(e => !(e.content && e.layer === layer));
-  history.redo = history.redo.filter(e => !(e.content && e.layer === layer));
+  const of = e => e.content && (e.layer === layer || e.layers?.includes(layer)); // e.layers: an AI change of several layers
+  history.undo = history.undo.filter(e => !of(e));
+  history.redo = history.redo.filter(e => !of(e));
 }
 
 /** A layer file changed on the disk: take it, or merge it with the unsaved changes of the layer. */
@@ -1149,6 +1151,7 @@ function select(layer, ids) {
   if (S.sel.ids.size && S.propsTab === 'layer') S.propsTab = 'selection';
   else if (!S.sel.ids.size && had && S.propsTab === 'selection') S.propsTab = 'layer';
   renderProps();
+  if (S.tool === 'area' && S.active?.hasItems) renderOptions(); // the count of selected items
   requestRender();
 }
 
@@ -1305,6 +1308,83 @@ function growArea(len) {
 
 function inArea(x, z) { const i = cellAt(x, z); return i >= 0 && !!S.area && !!S.area.mask[i]; }
 
+// --- Select area on a layer of items (objects, notes, paths): the shape selects the items in it, and is the
+// selected area too, so the AI agent gets both ("these objects", "this area").
+
+/** A test for world points inside a shape drawn with Select area (pts in world coordinates). */
+function shapeTest(type, pts) {
+  if (type === 'rect' || type === 'ellipse') {
+    const [[ax, az], [bx, bz]] = pts, x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), z0 = Math.min(az, bz), z1 = Math.max(az, bz);
+    if (type === 'rect') return (x, z) => x >= x0 && x <= x1 && z >= z0 && z <= z1;
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, rx = (x1 - x0) / 2 || 1e-9, rz = (z1 - z0) / 2 || 1e-9;
+    return (x, z) => ((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2 <= 1;
+  }
+  return (x, z) => { // even-odd rule
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, zi] = pts[i], [xj, zj] = pts[j];
+      if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+    }
+    return inside;
+  };
+}
+
+/** An object or a note by its position; a path when a part of it is inside. */
+const itemInside = (L, it, test) => (it.points ? L.samples(it).some(([x, z]) => test(x, z)) : test(...itemCenter(it)));
+
+/** The ids of the selection of L after adding (or with op 'subtract', removing) `ids`; 'replace': only them. */
+function combineItems(L, ids, op) {
+  const out = new Set(op !== 'replace' && S.sel.layer === L ? S.sel.ids : []);
+  for (const id of ids) { if (op === 'subtract') out.delete(id); else out.add(id); }
+  return out;
+}
+
+function selectItemsIn(L, test, op) {
+  if (!S.layers.includes(L) || !L.meta.visible) return;
+  if (L !== S.active) setActive(L);
+  select(L, combineItems(L, L.items.filter(it => itemInside(L, it, test)).map(it => it.id), op));
+}
+
+const kindKey = it => it.kind ?? it.color ?? '';
+
+/** Magic wand on items: the items of the same kind as the one clicked (notes: of the same color). */
+function sameKindAt(L, x, z, op) {
+  const hit = L.meta.visible ? L.hit(x, z, view) : null;
+  if (!hit) { if (op === 'replace') { select(L, []); deselectArea(); } return; }
+  const key = kindKey(hit), ids = L.items.filter(it => kindKey(it) === key).map(it => it.id);
+  if (op === 'replace') setArea(null);
+  select(L, combineItems(L, ids, op));
+  toast(`${ids.length} × ${key || (L.type === 'notes' ? 'note' : 'item')}`, 1400);
+}
+
+/** Adds the items of the kinds of the selected ones. */
+function selectSameKinds(L) {
+  const keys = new Set(selectedItems().map(kindKey));
+  select(L, combineItems(L, L.items.filter(it => keys.has(kindKey(it))).map(it => it.id), 'add'));
+}
+
+function invertItems(L) {
+  const sel = S.sel.layer === L ? S.sel.ids : new Set();
+  if (S.area) invertArea();
+  select(L, L.items.filter(it => !sel.has(it.id)).map(it => it.id));
+}
+
+/** A click (no drag) with Select area: on items, picks the one under it; elsewhere, deselects. */
+function areaClick(d) {
+  const L = d.layer;
+  if (L?.hasItems && S.layers.includes(L)) {
+    const hit = L.meta.visible ? L.hit(d.start[0], d.start[1], view) : null;
+    if (hit) {
+      const toggle = d.op === 'add' && S.sel.layer === L && S.sel.ids.has(hit.id);
+      if (d.op === 'replace') setArea(null);
+      select(L, combineItems(L, [hit.id], toggle ? 'subtract' : d.op));
+      return;
+    }
+    if (d.op === 'replace') select(L, []);
+  }
+  if (d.op === 'replace') deselectArea();
+}
+
 function inFloat(x, z) {
   const F = S.float;
   if (!F) return false;
@@ -1314,6 +1394,7 @@ function inFloat(x, z) {
 
 function wandAt(x, z, op) {
   const L = S.active, i = cellAt(x, z);
+  if (L?.hasItems) { sameKindAt(L, x, z, op); return; }
   if (!L?.raster) { toast('The magic wand picks similar cells of a mask, categories or height layer: select one'); return; }
   if (i < 0) return;
   const b = S.brush, tol = L.type === 'height' ? b.tolH : L.type === 'mask' ? b.tolerance * 2.55 : 0;
@@ -1628,7 +1709,7 @@ function draftUp(dr) {
   if (!d) return;
   if (!CLICK_SHAPES.includes(d.type)) {
     if (dr.moved) finishDraft();
-    else { S.draft = null; if (d.kind === 'area' && d.op === 'replace') deselectArea(); } // a click: deselect
+    else { S.draft = null; if (d.kind === 'area') areaClick(d); } // a click: pick an item, or deselect
   } else if (dr.moved) {
     if (d.type === 'line' && d.pts.length === 2) finishDraft(true); // one segment, dragged
     else d.pts.push([...d.pts[d.pts.length - 1]]);
@@ -1656,6 +1737,7 @@ function finishDraft(keepLast = false) {
       for (let y = c.y0; y < c.y1; y++) for (let x = c.x0; x < c.x1; x++) if (c.cov[(y - c.y0) * w + x - c.x0] >= 128) m[y * S.cols + x] = 1;
     }
     combineArea(m, d.op);
+    if (d.layer?.hasItems) selectItemsIn(d.layer, shapeTest(d.type, pts), d.op);
     return;
   }
   const L = d.layer;
@@ -2205,7 +2287,7 @@ window.addEventListener('keydown', e => {
     else if (S.active?.raster) selectAllArea();
     return;
   }
-  if (mod && k === 'i') { e.preventDefault(); invertArea(); return; }
+  if (mod && k === 'i') { e.preventDefault(); if (S.active?.hasItems) invertItems(S.active); else invertArea(); return; }
   if (mod && (k === 'c' || k === 'x')) { e.preventDefault(); copySelection(k === 'x'); return; }
   if (mod && k === 'v') { e.preventDefault(); pasteClip(); return; }
   if (mod) return;
@@ -2376,7 +2458,8 @@ function renderTools() {
     for (const b of group) {
       const t = TOOLS.find(x => x.id === b.tool);
       const on = S.tool === b.tool && (!b.shape || S.brush.shape === b.shape) && (!b.area || S.brush.area === b.area);
-      const name = b.shape ? `Shape: ${SHAPES[b.shape]}` : b.area ? `Select area: ${AREA_MODES[b.area]}` : t.name;
+      const name = b.shape ? `Shape: ${SHAPES[b.shape]}` : b.area === 'wand' && S.active?.hasItems ? 'Magic wand: the objects of the same kind'
+        : b.area ? `Select area: ${AREA_MODES[b.area]}` : t.name;
       const key = b.area === 'wand' ? 'W' : t.key.toUpperCase();
       nav.append(el('button', {
         class: 'tbtn' + (on ? ' on' : '') + (b.dashed ? ' dashed' : ''),
@@ -2409,7 +2492,7 @@ function renderOptions() {
   if (t === 'note') { renderNoteOptions(box); return; }
   if (!L) { box.append(el('div', { class: 'hint' }, 'Select a layer.')); return; }
   if (t === 'select') {
-    box.append(el('div', { class: 'hint' }, 'Click an object, a note or a path (on any visible unlocked layer) or drag a box. Drag to move, drag the orange dot to rotate (Shift: 15° steps). Shift+click adds to the selection. Double-click a note to edit it. A selected path: drag its points, drag a small circle to add a point, Alt+click a point to delete it. Ctrl+C / Ctrl+V copy and paste (at the cursor).'));
+    box.append(el('div', { class: 'hint' }, 'Click an object, a note or a path (on any visible unlocked layer) or drag a box. Drag to move, drag the orange dot to rotate (Shift: 15° steps). Shift+click adds to the selection. Double-click a note to edit it. A selected path: drag its points, drag a small circle to add a point, Alt+click a point to delete it. Ctrl+C / Ctrl+V copy and paste (at the cursor). More ways to select: Select area (L) — rectangle, ellipse, lasso, polygon, same kind (W).'));
     return;
   }
   if (['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'add'].includes(t) && !toolFits(t, L)) {
@@ -2526,7 +2609,33 @@ const AREA_HINTS = {
   wand: 'Click a cell: selects the cells of a similar value on the selected layer.',
 };
 
+const PICK_HINTS = {
+  rect: 'Drag a rectangle around objects.',
+  ellipse: 'Drag an ellipse around objects.',
+  free: 'Lasso: drag around the objects.',
+  polygon: 'Click the corners around the objects; click the first one, double-click or Enter to close.',
+  wand: 'Click an object: selects every object of its kind (notes: of its color).',
+};
+
+/** Select area on a layer of items: the shapes select items (and the area). */
+function renderPickOptions(box, L) {
+  const b = S.brush, A = S.area, n = S.sel.layer === L ? S.sel.ids.size : 0;
+  const btn = (text, title, fn, on = true) => el('button', { title, disabled: !on, onclick: fn }, text);
+  box.append(row('Mode', seg({ ...AREA_MODES, wand: 'Same kind' }, b.area, k => { b.area = k; S.draft = null; saveUi(); renderOptions(); requestRender(); })));
+  box.append(row('Selected', el('span', {}, `${n} of ${L.items.length}${A ? ` · area ${m2(A.count)}` : ''}`)));
+  box.append(el('div', { class: 'layer-actions wrap' },
+    btn('All', 'Select all (Ctrl+A)', () => select(L, L.items.map(i => i.id)), L.items.length > 0),
+    btn('Invert', 'Ctrl+I', () => invertItems(L), L.items.length > 0),
+    btn('Same kind', 'Add the objects of the kinds of the selected ones', () => selectSameKinds(L), n > 0),
+    btn('Deselect', 'Esc', () => { select(L, []); deselectArea(); }, n > 0 || !!A)));
+  box.append(el('div', { class: 'layer-actions wrap' },
+    btn('Copy', 'Ctrl+C', () => copySelection(false), n > 0),
+    btn('Delete', 'Delete', deleteSelected, n > 0 && !L.meta.locked)));
+  box.append(el('div', { class: 'hint' }, `${PICK_HINTS[b.area]} Shift adds, Alt subtracts; a click picks one object. Then Select (V) moves them. The AI agent sees what you selected (the objects and the area): ask it about “these objects” or “this area”. Key L again: the next shape, W: same kind.`));
+}
+
 function renderAreaOptions(box, L) {
+  if (L.hasItems && !S.float) { renderPickOptions(box, L); return; }
   const b = S.brush, F = S.float, A = S.area, can = !!L.raster;
   box.append(row('Mode', seg(AREA_MODES, b.area, k => { b.area = k; S.draft = null; saveUi(); renderOptions(); requestRender(); })));
   if (b.area === 'wand') {

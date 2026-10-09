@@ -1,7 +1,11 @@
-// Review mode (AI Agent → Settings): the agent's changes become proposals. A change is applied, so the map shows it,
-// but it is held: not saved, its layers are not edited by the user, its undo steps are not undone one by one. The user
-// accepts it, asks for changes (with a comment, the change is undone) or rejects it (undone). The agent gets the
-// decision as the result of its call, or later with wait_for_review; begin_proposal … submit_proposal groups calls.
+// The agent's changes as units the user sees on a card over the map (js/agent.js routes the changing calls here).
+// begin_change … end_change groups calls into one change; a call alone is one too. Each can carry the agent's text
+// (title, description, a comment per call), shown on the card and in the Activity.
+// Review mode (AI Agent → Settings, on by default): a change is a proposal. It is applied, so the map shows it, but it
+// is held: not saved, its layers are not edited by the user, its undo steps are not undone one by one. The user
+// accepts it (one undo step), asks for changes (with a comment, the change is undone) or rejects it (undone). The
+// agent gets the decision as the result of its call, or later with wait_for_review.
+// Without review mode a change applies at once; a group becomes one undo step, and the card shows what was done.
 (function (ME) {
 'use strict';
 
@@ -9,51 +13,59 @@ const A = () => ME.app;
 const fail = msg => { throw new ME.agentInternals.ToolError(msg); };
 const DEFAULT_WAIT = 45; // seconds a call waits for the user (some agents give up on a call after 60 s)
 const MAX_WAIT = 110;
+const SHOW_DONE = 20000; // ms a finished change stays on the card (longer while the pointer is on it)
 let nextId = 1;
 
 const R = ME.agentReview = {
-  active: null, // the proposal being prepared ('open') or waiting for the user ('pending')
-  list: [], // every proposal of this session, newest first
-  collecting: null, // the proposal the current tool call adds to
+  active: null, // the change being made ('open') or the proposal waiting for the user ('pending')
+  shown: null, // a finished change (review mode off) on the card
+  list: [], // every change of this session, newest first
+  collecting: null, // the change the current tool call adds to
 
   /** Is this layer held by the active proposal? */
-  holds(layer) { return !!(R.active && layer && R.active.layers.has(layer)); },
+  holds(layer) { return !!(R.active?.review && layer && R.active.layers.has(layer)); },
   /** Does the active proposal change the layer list or settings (metadata.json)? */
-  holdsStructure() { return !!(R.active && R.active.meta); },
+  holdsStructure() { return !!(R.active?.review && R.active.meta); },
   /** Is this undo step part of the active proposal? */
-  owns(entry) { return !!(R.active && entry && R.active.entries.includes(entry)); },
+  owns(entry) { return !!(R.active?.review && entry && R.active.entries.includes(entry)); },
 };
 
-function create(title, client, single) {
+const clip = (s, n) => String(s ?? '').trim().slice(0, n);
+
+function create(title, client, single, review, active = true) {
   const P = {
-    id: nextId++, title, description: '', client: client?.name || 'agent', single, status: 'open', created: new Date(),
+    id: nextId++, title, description: '', client: client?.name || 'agent', single, review, status: 'open', created: new Date(),
     entries: [], layers: new Set(), meta: false, marks: [], changes: [], results: [], before: false, feedback: '', waiters: [],
   };
-  R.active = P;
+  if (active) { R.active = P; hideDone(); }
   R.list.unshift(P);
+  if (R.list.length > 100) R.list.length = 100;
   return P;
 }
 
 const label = e => String(e.label || '').replace(/^AI: /, '');
+const what = P => (P.review ? 'proposal' : 'change');
 
-/** Runs a changing tool call as (part of) a proposal. exec() runs the tool. Returns {result, later?}: later resolves
- *  to the result with the user's decision (a single call waits for it). */
-R.run = async (call, exec) => {
+/** Runs a changing tool call as (part of) a change. exec() runs the tool. Returns {result, later?}: later resolves to
+ *  the result with the user's decision (a proposal of one call waits for it). */
+R.run = async (call, exec, { review = true, comment = '' } = {}) => {
   let P = R.active;
   if (P?.status === 'pending') {
     fail(`Your proposal #${P.id} ("${P.title}") is waiting for the user's review. Call wait_for_review (id ${P.id}) and act on the decision before changing more.`);
   }
+  if (!P && !review) return direct(call, exec, comment);
   const single = !P;
-  if (single) P = create(call.tool.replace(/_/g, ' '), call.client, true);
+  if (single) P = create(call.tool.replace(/_/g, ' '), call.client, true, true);
   const collect = [], mv = A().S.metaVersion, had = new Set(A().S.layers);
   ME.agentCollect = collect;
-  ME.agentApplying = true;
+  if (P.review) ME.agentApplying = true;
   R.collecting = P;
   let result;
   try {
     result = await exec();
   } catch (e) {
-    revertEntries(collect); // a failed call leaves nothing behind
+    if (P.review) revertEntries(collect); // a failed call leaves nothing of a proposal behind
+    else P.entries.push(...collect);
     if (single) discard(P);
     throw e;
   } finally {
@@ -65,22 +77,39 @@ R.run = async (call, exec) => {
   for (const L of A().S.layers) if (!had.has(L)) P.layers.add(L); // a new layer is the proposal's too
   if (A().S.metaVersion !== mv) P.meta = true;
   const changed = collect.map(label).filter(Boolean);
-  if (changed.length) P.changes.push(...changed);
+  P.results.push(result.data);
   if (single) {
     if (!collect.length) { discard(P); return { result }; } // nothing changed (e.g. nothing to place)
     P.title = changed.join('; ');
-    P.results.push(result.data);
+    P.description = comment;
+    P.changes = changed.map(l => ({ label: l }));
     submit(P);
-    return { result, later: R.decision(P, DEFAULT_WAIT).then(d => withDecision(result, d)) };
+    return { result, later: R.decision(P, DEFAULT_WAIT).then(d => withDecision(result, d, 'proposal')) };
   }
-  P.results.push(result.data);
+  if (changed.length) P.changes.push(...changed.map((l, k) => ({ label: l, comment: k === changed.length - 1 ? comment : '' })));
+  else if (comment) P.changes.push({ label: call.tool.replace(/_/g, ' ') + ': nothing changed', comment });
   render();
-  return { result: withDecision(result, { id: P.id, status: 'open', note: 'Part of your open proposal: call submit_proposal when it is complete.' }) };
+  return { result: withDecision(result, { id: P.id, status: 'open', note: `Part of your open ${what(P)}: call end_change when it is complete.` }, what(P)) };
 };
 
-function withDecision(result, d) {
+/** A change without review mode and outside begin_change … end_change: it applies; with a comment the card shows it. */
+async function direct(call, exec, comment) {
+  const collect = [];
+  ME.agentCollect = collect;
+  let result;
+  try { result = await exec(); } finally { ME.agentCollect = null; }
+  if (comment && collect.length) {
+    const P = create(collect.map(label).filter(Boolean).join('; '), call.client, true, false, false);
+    P.description = comment;
+    P.entries = collect;
+    finishDirect(P);
+  }
+  return { result };
+}
+
+function withDecision(result, d, key) {
   const data = result.data && typeof result.data === 'object' ? result.data : (result.text ? { text: result.text } : {});
-  return { ...result, data: { ...data, proposal: d } };
+  return { ...result, data: { ...data, [key]: d } };
 }
 
 function discard(P) {
@@ -98,6 +127,24 @@ function submit(P) {
   R.show(P, true);
 }
 
+/** Many undo steps of a change -> one, named after it (only while they are the latest steps: else they stay apart). */
+function mergeSteps(P) {
+  const h = A().history, live = P.entries.filter(e => h.undo.includes(e));
+  P.entries = live;
+  if (live.length < 2) return;
+  const top = h.undo.slice(-live.length);
+  if (!top.every((e, k) => e === live[k])) return; // the user changed something in between
+  const layers = [...new Set(live.map(e => e.layer).filter(Boolean))];
+  const entry = {
+    label: `AI: ${P.title}`, layers, content: live.some(e => e.content),
+    undo: () => { for (const e of [...live].reverse()) e.undo(); },
+    redo: () => { for (const e of live) e.redo(); },
+  };
+  if (layers.length === 1) entry.layer = layers[0];
+  h.undo.splice(-live.length, live.length, entry);
+  P.entries = [entry];
+}
+
 /** Resolves with the decision, or {status: 'pending'} after `seconds`. */
 R.decision = (P, seconds) => {
   if (P.status !== 'pending' && P.status !== 'open') return Promise.resolve(decisionOf(P));
@@ -110,10 +157,12 @@ R.decision = (P, seconds) => {
 function decisionOf(P) {
   const base = { id: P.id, status: P.status };
   if (P.status === 'pending') return { ...base, note: `The user has not decided yet. Call wait_for_review with {"id": ${P.id}} to keep waiting.` };
-  if (P.status === 'open') return { ...base, note: 'The proposal is open: add changes, then call submit_proposal.' };
+  if (P.status === 'open') return { ...base, note: `The ${what(P)} is open: add changes, then call end_change.` };
   if (P.status === 'accepted') return { ...base, note: 'The user accepted it: the changes are on the map and saved.' };
   if (P.status === 'changes_requested') return { ...base, feedback: P.feedback, note: 'The proposal was undone: nothing of it is on the map. Make a new proposal that follows the user\'s feedback.' };
   if (P.status === 'rejected') return { ...base, note: 'The user rejected it: it was undone, nothing of it is on the map. Do not repeat it; ask the user what they want if unsure.' };
+  if (P.status === 'done') return { ...base, note: 'Applied (review mode is off): the user can undo it in one step.' };
+  if (P.status === 'undone') return { ...base, note: 'The user undid this change.' };
   return { ...base, note: P.note || 'The proposal was dropped.' };
 }
 
@@ -130,13 +179,46 @@ function decide(P, status, feedback = '') {
   P.feedback = feedback;
   P.decided = new Date();
   if (R.active === P) R.active = null;
+  if (status === 'accepted') mergeSteps(P); // one undo step
   for (const w of P.waiters.splice(0)) { clearTimeout(w.timer); w.resolve(decisionOf(P)); }
   A().afterHistory();
   A().scheduleSave();
   render();
   ME.agent?.changed();
-  A().toast(status === 'accepted' ? 'AI proposal accepted' : status === 'rejected' ? 'AI proposal rejected: undone' : 'Sent to the agent; the proposal was undone', 2500);
+  A().toast(status === 'accepted' ? 'AI proposal accepted' : status === 'rejected' ? 'AI proposal rejected: undone' : status === 'withdrawn' ? 'The agent withdrew its proposal' : 'Sent to the agent; the proposal was undone', 2500);
 }
+
+/** A change without review: its steps become one undo step and the card shows it for a while. */
+function finishDirect(P) {
+  P.status = 'done';
+  P.decided = new Date();
+  if (R.active === P) R.active = null;
+  mergeSteps(P);
+  for (const w of P.waiters.splice(0)) { clearTimeout(w.timer); w.resolve(decisionOf(P)); }
+  A().renderSaveState();
+  R.shown = P;
+  render();
+  ME.agent?.changed();
+}
+
+/** Undoes a finished change from its card: only while it is the latest in the app's history. */
+function undoDone(P) {
+  if (!canUndo(P)) return;
+  for (let k = 0; k < P.entries.length; k++) A().undo();
+  P.status = 'undone';
+  hideDone();
+  ME.agent?.changed();
+}
+const canUndo = P => P.entries.length > 0 && P.entries.every((e, k, all) => A().history.undo.at(k - all.length) === e);
+
+let doneTimer = null;
+function hideDone() {
+  clearTimeout(doneTimer);
+  if (!R.shown) return;
+  R.shown = null;
+  render();
+}
+function hideLater(ms = SHOW_DONE) { clearTimeout(doneTimer); doneTimer = setTimeout(hideDone, ms); }
 
 /** The map before the proposal (true) or with it (false): to compare. */
 function toggleBefore(P, before) {
@@ -163,18 +245,19 @@ function removeFromHistory(entries) {
   h.redo = h.redo.filter(e => !set.has(e));
 }
 
-/** The map was opened again (or another one): the proposal cannot be applied any more. */
+/** The map was opened again (or another one): the change cannot be applied any more. */
 R.drop = why => {
+  hideDone();
   const P = R.active;
   if (!P) return;
   P.status = 'dropped';
-  P.note = `The proposal was dropped: ${why}.`;
+  P.note = `The ${what(P)} was dropped: ${why}.`;
   R.active = null;
   for (const w of P.waiters.splice(0)) { clearTimeout(w.timer); w.resolve(decisionOf(P)); }
   render();
 };
 
-/** Brings the proposal's places into view. */
+/** Brings the places of a change into view. */
 R.show = (P, quiet) => {
   const box = marksBox(P);
   if (!box) return;
@@ -203,35 +286,57 @@ function marksBox(P) {
   return b;
 }
 
+/** The latest changes for the agent (get_user_context): what the user did with them. */
+R.recent = (n = 5) => R.list.slice(0, n).map(P => ({ id: P.id, title: P.title, status: P.status, ...(P.feedback ? { feedback: P.feedback } : {}) }));
+
 // ------------------------------------------------------------------------------------------------ tools
 
 const T = ME.agentTools;
 
-T.begin_proposal = (args, ctx) => {
-  if (!ctx.review) return { data: { review_mode: false, note: 'Review mode is off: your changes apply directly (each is one undo step). No need for proposals.' } };
-  if (R.active?.status === 'pending') fail(`Proposal #${R.active.id} is still waiting for the user's review: call wait_for_review first.`);
-  if (R.active?.status === 'open') fail(`Proposal #${R.active.id} is already open: add changes to it and call submit_proposal.`);
-  const P = create(String(args.title || 'AI proposal').slice(0, 120), ctx.client, false);
-  P.description = String(args.description || '').slice(0, 2000);
+T.begin_change = (args, ctx) => {
+  if (!ctx.canWrite) fail('The user lets the agent only read the map (AI Agent → Settings in the app). Ask them to allow changes.');
+  const P0 = R.active;
+  if (P0?.status === 'pending') fail(`Proposal #${P0.id} is still waiting for the user's review: call wait_for_review first.`);
+  if (P0?.status === 'open') fail(`${what(P0) === 'proposal' ? 'Proposal' : 'Change'} #${P0.id} ("${P0.title}") is already open: add changes to it and call end_change.`);
+  const P = create(clip(args.title, 120) || 'AI change', ctx.client, false, !!ctx.review);
+  P.description = clip(args.description, 4000);
   render();
-  return { data: { id: P.id, status: 'open', note: 'Now make the changes (each call adds to this proposal), then call submit_proposal.' } };
+  return {
+    data: {
+      id: P.id, status: 'open', review_mode: !!ctx.review,
+      note: ctx.review
+        ? 'Now make the changes (each call adds to this proposal; the map shows them at once, held for the user), then call end_change: the user accepts, asks for changes or rejects it.'
+        : 'Now make the changes (each call adds to this change; they apply at once), then call end_change: they become one undo step, shown to the user with your title and summary.',
+    },
+  };
 };
 
-T.submit_proposal = (args, ctx) => {
-  if (!ctx.review) return { data: { review_mode: false, note: 'Review mode is off: your changes were applied directly.' } };
+T.end_change = (args, ctx) => {
   const P = R.active;
   if (!P || P.status !== 'open') {
     const last = R.list.find(x => !x.single);
-    fail(last && ['rejected', 'dropped'].includes(last.status) ? `There is no open proposal: the user rejected #${last.id} ("${last.title}") while you were preparing it.` : 'There is no open proposal: call begin_proposal first.');
+    fail(last && ['rejected', 'dropped'].includes(last.status) ? `There is no open change: the user rejected #${last.id} ("${last.title}") while you were preparing it.` : 'There is no open change: call begin_change first.');
+  }
+  if (args.title) P.title = clip(args.title, 120);
+  if (args.summary) P.description = clip(args.summary, 4000);
+  if (!P.review) {
+    if (!P.entries.some(e => A().history.undo.includes(e))) {
+      discard(P);
+      return { data: { change: { id: P.id, status: 'empty' }, note: 'Nothing on the map changed: the change was closed.' } };
+    }
+    finishDirect(P);
+    return { data: { change: { id: P.id, status: 'done', changes: P.changes.map(c => c.label), undo_steps: P.entries.length }, note: 'Applied. The user sees your title and summary, and can undo it in one step.' } };
   }
   if (!P.entries.length) { discard(P); fail('The proposal has no changes: nothing to review. It was closed.'); }
-  if (args.summary) P.description = String(args.summary).slice(0, 2000);
   submit(P);
-  return { deferred: R.decision(P, args.wait ?? DEFAULT_WAIT).then(d => ({ data: { proposal: d, changes: P.changes } })) };
+  return { deferred: R.decision(P, args.wait ?? DEFAULT_WAIT).then(d => ({ data: { proposal: d, changes: P.changes.map(c => c.label) } })) };
 };
 
+T.begin_proposal = T.begin_change; // the names before 0.3
+T.submit_proposal = T.end_change;
+
 T.wait_for_review = args => {
-  const P = args.id != null ? R.list.find(x => x.id === args.id) : R.active || R.list[0];
+  const P = args.id != null ? R.list.find(x => x.id === args.id) : (R.active?.review ? R.active : null) || R.list.find(x => x.review) || R.list[0];
   if (!P) fail(args.id != null ? `No proposal #${args.id}` : 'There is no proposal');
   return { deferred: R.decision(P, args.wait ?? DEFAULT_WAIT).then(d => ({ data: { proposal: d } })) };
 };
@@ -258,50 +363,88 @@ const el = (tag, attrs = {}, ...kids) => {
   return e;
 };
 
-let card = null, changing = false, draft = '';
+/** The agent's text: lines, "- " lists, **bold** and `code` (as text: no HTML). */
+function richText(text, cls) {
+  const box = el('div', { class: cls });
+  let list = null;
+  for (const line of String(text).split('\n')) {
+    const item = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/.exec(line);
+    if (item) { if (!list) box.append(list = el('ul')); list.append(el('li', {}, ...inline(item[1]))); continue; }
+    list = null;
+    if (line.trim()) box.append(el('p', {}, ...inline(line.trim())));
+  }
+  return box;
+}
+function inline(s) {
+  const out = [], re = /\*\*(.+?)\*\*|`([^`]+)`/g;
+  let k = 0, m;
+  while ((m = re.exec(s))) {
+    if (m.index > k) out.push(s.slice(k, m.index));
+    out.push(m[1] != null ? el('b', {}, m[1]) : el('code', {}, m[2]));
+    k = re.lastIndex;
+  }
+  if (k < s.length) out.push(s.slice(k));
+  return out;
+}
+
+let card = null, changing = false, draft = '', shownFor = null;
 
 function render() {
-  const P = R.active;
-  if (!P) { card?.remove(); card = null; changing = false; draft = ''; ME.app?.requestRender(); return; }
+  const P = R.active || R.shown;
+  if (!P) { card?.remove(); card = null; changing = false; draft = ''; shownFor = null; ME.app?.requestRender(); return; }
   if (!card) {
     card = el('div', { id: 'ai-proposal' });
     document.getElementById('stage').append(card);
     for (const t of ['pointerdown', 'wheel', 'keydown']) card.addEventListener(t, e => e.stopPropagation());
+    card.addEventListener('pointerenter', () => { if (card.classList.contains('done')) clearTimeout(doneTimer); });
+    card.addEventListener('pointerleave', () => { if (card.classList.contains('done')) hideLater(8000); });
   }
-  const pending = P.status === 'pending';
+  if (shownFor !== P) { changing = false; draft = ''; shownFor = P; }
+  const pending = P.status === 'pending', done = P.status === 'done';
+  if (done) { if (!card.matches(':hover')) hideLater(); } else clearTimeout(doneTimer);
   const btn = (text, cls, onclick, title = '') => el('button', { type: 'button', class: cls, onclick, title }, text);
   const ta = el('textarea', { rows: 3, placeholder: 'What should the agent change? E.g. “fewer trees near the road, more birches”', value: draft,
     oninput: e => { draft = e.target.value; send.disabled = !draft.trim(); },
     onkeydown: e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && draft.trim()) { e.preventDefault(); decide(P, 'changes_requested', draft.trim()); } else if (e.key === 'Escape') { changing = false; render(); } } });
   const send = btn('Send to the agent', 'primary', () => decide(P, 'changes_requested', draft.trim()), 'Ctrl+Enter');
   send.disabled = !draft.trim();
-  card.className = pending ? 'pending' : 'open';
-  card.replaceChildren(
-    el('div', { class: 'head' }, el('span', { class: `led ${pending ? 'review' : 'busy'}` }), el('b', {}, 'AI proposal'),
-      el('span', { class: 'muted' }, `· ${P.client}${pending ? '' : ' · preparing…'}`), el('span', { class: 'spacer' }),
-      el('button', { type: 'button', class: 'ibtn', title: 'Show it on the map', onclick: () => R.show(P) }, ME.icon('crosshair'))),
+  const state = P.review ? (pending ? '' : ' · preparing…') : done ? ' · done' : ' · working…';
+  const undoable = done && canUndo(P);
+  card.className = `${pending ? 'pending' : done ? 'done' : 'open'}${P.review ? ' review' : ''}`;
+  card.replaceChildren(...[
+    el('div', { class: 'head' }, el('span', { class: `led ${pending ? 'review' : done ? 'on' : 'busy'}` }), el('b', {}, P.review ? 'AI proposal' : 'AI change'),
+      el('span', { class: 'muted' }, `· ${P.client}${state}`), el('span', { class: 'spacer' }),
+      P.marks.length ? el('button', { type: 'button', class: 'ibtn', title: 'Show it on the map', onclick: () => R.show(P) }, ME.icon('crosshair')) : null,
+      done ? el('button', { type: 'button', class: 'ibtn', title: 'Close', onclick: hideDone }, ME.icon('x')) : null),
     el('div', { class: 'title' }, P.title),
-    P.description ? el('div', { class: 'desc' }, P.description) : null,
-    P.changes.length ? el('ul', { class: 'changes' }, ...P.changes.slice(0, 8).map(c => el('li', {}, c)), P.changes.length > 8 ? el('li', { class: 'muted' }, `and ${P.changes.length - 8} more`) : null) : null,
+    P.description ? richText(P.description, 'desc') : null,
+    P.changes.length && !(P.single && P.changes.length === 1) ? el('ul', { class: 'changes' }, ...P.changes.slice(0, 12).map(c => el('li', {}, c.label, c.comment ? richText(c.comment, 'comment') : null)),
+      P.changes.length > 12 ? el('li', { class: 'muted' }, `and ${P.changes.length - 12} more`) : null) : null,
     pending && P.entries.length ? el('div', { class: 'compare' },
       el('span', { class: 'muted small' }, 'Compare'),
       el('div', { class: 'seg' },
         btn('Before', P.before ? 'on' : '', () => toggleBefore(P, true), 'The map without the proposal'),
         btn('After', P.before ? '' : 'on', () => toggleBefore(P, false), 'The map with the proposal'))) : null,
-    changing
-      ? el('div', { class: 'change-box' }, ta, el('div', { class: 'actions' }, btn('Cancel', '', () => { changing = false; render(); }), send))
-      : el('div', { class: 'actions' },
-        btn('Reject', 'danger', () => decide(P, 'rejected'), 'Undo it: nothing of it stays'),
-        pending ? btn('Change…', '', () => { changing = true; render(); card.querySelector('textarea')?.focus(); }, 'Undo it and tell the agent what to do instead') : null,
-        pending ? btn('Accept', 'primary accept', () => decide(P, 'accepted'), 'Keep it: it is saved') : null),
-  );
+    done
+      ? el('div', { class: 'actions' },
+        Object.assign(btn('Undo', 'danger', () => undoDone(P), undoable ? 'Undo this change (one step)' : 'You changed the map since: use Undo (Ctrl+Z)'), { disabled: !undoable }),
+        btn('OK', 'primary', hideDone))
+      : !P.review
+        ? el('div', { class: 'actions' }, btn('Finish', '', () => finishDirect(P), 'End the change now: what is done stays, as one undo step'))
+        : changing
+          ? el('div', { class: 'change-box' }, ta, el('div', { class: 'actions' }, btn('Cancel', '', () => { changing = false; render(); }), send))
+          : el('div', { class: 'actions' },
+            btn('Reject', 'danger', () => decide(P, 'rejected'), 'Undo it: nothing of it stays'),
+            pending ? btn('Change…', '', () => { changing = true; render(); card.querySelector('textarea')?.focus(); }, 'Undo it and tell the agent what to do instead') : null,
+            pending ? btn('Accept', 'primary accept', () => decide(P, 'accepted'), 'Keep it: it is saved') : null),
+  ].filter(Boolean));
   ME.app?.requestRender();
 }
 R.render = render;
 
-// the places of the proposal on the map: a dashed outline while it waits
+// the places of the change on the map: a dashed outline while it is on the card
 R.drawMarks = (ctx, view) => {
-  const P = R.active;
+  const P = R.active || R.shown;
   if (!P || !P.marks.length) return;
   ctx.save();
   for (const m of P.marks) {

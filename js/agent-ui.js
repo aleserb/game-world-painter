@@ -141,6 +141,7 @@ const TABS = {
         el('span', { class: 'who muted' }, e.client),
         el('span', { class: 'ms muted' }, e.ms != null ? `${e.ms} ms` : '…'),
         el('div', { class: 'args muted small' }, e.args),
+        e.comment ? el('div', { class: 'comment small' }, e.comment) : null,
         e.result ? el('div', { class: 'res small' }, e.result) : null))),
       el('div', { class: 'layer-actions' }, el('button', { type: 'button', onclick: () => { agent.log.length = 0; render(); } }, 'Clear')),
     ];
@@ -157,10 +158,10 @@ const TABS = {
       el('p', { class: 'muted small' }, 'Where this map is on the disk: the browser does not tell, so the MCP server finds it when an agent asks (get_project_path) and the app remembers it.'),
       el('p', { class: 'muted small' }, `Another port: start the server with --port <n> (or GWP_MCP_PORT) and put the same port here.`),
       flag('canWrite', 'Let the agent change the map', 'Off: it can only look, measure and point at things.'),
-      flag('review', 'Review the agent\'s changes', 'Each change becomes a proposal on the map: accept it, ask for changes (with a comment) or reject it. Until then it is not saved.'),
+      flag('review', 'Review the agent\'s changes', 'On by default. Each change becomes a proposal on the map: accept it, ask for changes (with a comment) or reject it. Until then it is not saved. Off: changes apply at once, and the agent\'s notes on them show on a card.'),
       flag('confirmDeletes', 'Ask before the agent deletes', 'A dialog here before items are deleted (in review mode the proposal covers it).'),
       flag('highlight', 'Show the agent\'s changes', 'Outline what it changed or points at, for a moment.'),
-      el('p', { class: 'muted small' }, 'Every change of the agent is one step of Undo (Ctrl+Z), named “AI: …”. Locked layers stay as they are.'),
+      el('p', { class: 'muted small' }, 'Every change of the agent is one step of Undo (Ctrl+Z), named “AI: …” (a group of changes too). Locked layers stay as they are.'),
     ];
   }],
   help: ['Troubleshooting', () => [el('ul', { class: 'trouble' }, ...[

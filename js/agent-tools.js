@@ -206,6 +206,11 @@ function regionMask(spec, g = G(), depth = 0) {
     for (let i = 0; i < m.length; i++) if (d[i] <= dist) m[i] = 1;
     return m;
   }
+  if (spec.items === 'selection') {
+    const { S } = g;
+    if (!S.sel.layer || !S.sel.ids.size) fail('The user has not selected items in the app. Ask them to select some (Select, V, or the Select area tools on an objects layer), or use another region');
+    return itemsMask(g, S.sel.layer, S.sel.layer.items.filter(i => S.sel.ids.has(i.id)));
+  }
   if (spec.items) {
     const L = layerOf(spec.items.layer);
     if (!L.hasItems) fail(`"${L.id}" has no items`);

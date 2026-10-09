@@ -63,9 +63,14 @@ Later the server will be on npm: `npx -y game-world-painter-mcp` instead of `nod
 | `create_layer`, `update_layer` | New layers; names, groups, colors, visibility, classes |
 | `show_on_map` | Moves the user's view to something and outlines it, with a message; can select it |
 | `undo` | Undoes the agent's latest changes (in review mode: withdraws its proposal) |
-| `begin_proposal`, `submit_proposal`, `wait_for_review` | Review mode: group changes into one proposal, show it to the user, get the decision |
+| `begin_change`, `end_change` | Group several calls into one change with a title and a summary: one undo step, or one proposal in review mode |
+| `wait_for_review` | Review mode: wait for the user's decision on a proposal |
 
-Most tools take a **region**: `{"area":"selection"}`, `{"zone":"village"}`, `{"layer":"trees","min":50}`,
+The changing tools take a `comment`: the agent's words on the change (what and why), shown to the user with it.
+`get_user_context` tells what the user selected — objects (with Select or the Select area tools: rectangle, ellipse,
+lasso, polygon, same kind) and areas — so "these" and "here" mean something.
+
+Most tools take a **region**: `{"area":"selection"}`, `{"items":"selection"}`, `{"zone":"village"}`, `{"layer":"trees","min":50}`,
 `{"near":"roads","distance":8}`, `{"rect":[x0,z0,x1,z1]}`, `{"slope":{"max":25}}`, … combined with
 `{"all":[…]}`, `{"any":[…]}`, `{"not":…}` — see [the skill's reference](../skills/game-world-painter/references/regions.md).
 
@@ -88,12 +93,17 @@ The server also offers the skill and the [project format](../docs/project-format
   folder (no `..`, no links out). When no app is connected it opens the default browser at
   `https://aleserb.github.io/game-world-painter/?mcp=<port>&map=<path>` (the app on that link turns AI Agent on with
   this local server and waits for the map). After a reload the app opens the map again once the server is connected.
-- **Review mode** (AI Agent → Settings → *Review the agent's changes*): a change is applied but held — shown on the map
-  with a card (title, what changed, Before / After), not saved, its layers locked for the user — until the user
+- **Changes on a card**: `begin_change` … `end_change` groups calls; a call alone is a change too. The card at the top
+  right of the map shows the agent's title, description or summary, and each step with its `comment` (lines,
+  `- ` lists, `**bold**`, `` `code` ``).
+- **Review mode** (AI Agent → Settings → *Review the agent's changes*, on by default): a change is applied but held — shown on the map
+  with the card (title, what changed, Before / After), not saved, its layers locked for the user — until the user
   clicks **Accept** (kept and saved), **Change…** (undone; their comment goes to the agent as `feedback`) or
   **Reject** (undone). The changing call waits for the decision up to 45 s (agents such as Codex give up on a call
-  after 60 s); after that it returns `pending` and the agent calls `wait_for_review`.
-- **Undo**: each tool call that changes the map is one step named “AI: …” in the app. The agent's `undo` only undoes
+  after 60 s); after that it returns `pending` and the agent calls `wait_for_review`. An accepted proposal is one
+  undo step. With review mode off, changes apply at once; a group is one undo step, and the card shows it with
+  **Undo** for a while.
+- **Undo**: each tool call that changes the map is one step named “AI: …” in the app (a group: one step named after it). The agent's `undo` only undoes
   its own latest steps.
 - **The folder on disk** (`get_project_path`): browsers do not reveal paths, so the app sends what identifies its folder
   (the name, a SHA-256 of `metadata.json`, the sizes and dates of the layer files) and the server finds it on disk. It
