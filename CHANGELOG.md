@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 — 2026-10-09
+
+- New map starts from the basic set of layers, not from a copy of the open map's layers; a new choice "No layers"
+  makes a map with an empty list, and the dialog remembers the set chosen last. The agent's create_map takes
+  `"layers": "none"` too.
+
 ## 0.3.0 — 2026-10-09
 
 Fixes found in a review of the whole code:

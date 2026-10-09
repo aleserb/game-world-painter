@@ -308,7 +308,7 @@ T._create_map = async args => {
   const [cx, cz] = args.center ? pt(args.center, 'center') : [0, 0], W = +(cols * cell).toFixed(4), H = +(rows * cell).toFixed(4);
   const nw = { x0: +(cx - W / 2).toFixed(4), z0: +(cz - H / 2).toFixed(4), width: W, height: H, cols, rows };
   const layers = args.layers || 'basic';
-  if (!['basic', 'notes', 'same'].includes(layers)) fail('layers is basic, notes or same');
+  if (!['basic', 'none', 'notes', 'same'].includes(layers)) fail('layers is basic, none, notes or same');
   if (layers === 'same' && !A().S.project) fail('layers "same" copies the layers of the open map: no map is open');
   await saveOpenMap();
   const f = new ME.RemoteFolder(args.root, args.name);

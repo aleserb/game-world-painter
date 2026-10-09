@@ -45,7 +45,7 @@ export const TOOLS = [
   {
     name: 'create_map',
     title: 'Create a new map',
-    description: 'Creates a new map in the folder at "path" (made if missing; it must not have a map yet) and opens it in the app: the bounds and cell size in the unit of the map, and a set of layers — "basic" (terrain height, ground, zones, water, roads, rivers, borders, rocks, grass, bushes, trees, buildings, enemies, chests, hiding spots, notes), "notes" (only notes), or "same" (the layers of the map open now, empty). Then shape it with the other tools.',
+    description: 'Creates a new map in the folder at "path" (made if missing; it must not have a map yet) and opens it in the app: the bounds and cell size in the unit of the map, and a set of layers — "basic" (terrain height, ground, zones, water, roads, rivers, borders, rocks, grass, bushes, trees, buildings, enemies, chests, hiding spots, notes), "none" (no layers: make them with create_layer), "notes" (only notes), or "same" (the layers of the map open now, empty). Then shape it with the other tools.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,7 +56,7 @@ export const TOOLS = [
         height: { type: 'number', description: 'Along z (default: as width)' },
         cell: { type: 'number', description: 'The cell size (default about 0.25–0.5 m); at most 2048 cells on a side' },
         center: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: '[x, z] of the middle (default [0, 0])' },
-        layers: { type: 'string', enum: ['basic', 'notes', 'same'], description: 'Default basic' },
+        layers: { type: 'string', enum: ['basic', 'none', 'notes', 'same'], description: 'Default basic' },
         browser: { type: 'boolean', description: 'Open a browser when no app is connected (default true)' },
       },
       required: ['path'],

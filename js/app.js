@@ -3682,7 +3682,8 @@ function openMapDialog(mode) {
   const ok = dlg.querySelector('.ok');
   ok.textContent = mode === 'new' ? 'Choose a folder and create' : 'Apply';
   f('title').value = 'New map';
-  f('layers').value = S.project ? 'same' : 'basic';
+  const lastSet = localStorage.getItem('gwp-new-layers'); // the set chosen last time (the basic set the first time)
+  f('layers').value = lastSet && (lastSet !== 'same' || S.project) ? lastSet : 'basic';
   f('layers').querySelector('[value=same]').disabled = !S.project;
   function update() {
     const nw = readMapForm(form), info = dlg.querySelector('.info'), L = u().label;
@@ -3712,7 +3713,10 @@ function openMapDialog(mode) {
     const nw = readMapForm(form);
     if (!nw || ok.disabled) return;
     dlg.close();
-    if (mode === 'new') await createMap(nw, f('title').value.trim() || 'New map', f('layers').value, unitSel.value);
+    if (mode === 'new') {
+      localStorage.setItem('gwp-new-layers', f('layers').value);
+      await createMap(nw, f('title').value.trim() || 'New map', f('layers').value, unitSel.value);
+    }
     else {
       if (unitSel.value !== from) changeUnit(unitSel.value, factor());
       if (!sameWorld(nw, S.project.world)) resizeMap(nw);
@@ -3866,7 +3870,7 @@ function basicLayers(unitId = 'm') {
 }
 
 /** A new map in a folder the user picks (an empty one: the picker can make it): metadata.json and empty layer files.
- *  layersMode: 'same' (the layers of the open map, empty), 'basic' or 'notes'. unitId: the unit of its numbers. */
+ *  layersMode: 'basic', 'none', 'notes' or 'same' (the layers of the open map, empty). unitId: the unit of its numbers. */
 async function createMap(nw, title, layersMode, unitId = 'm') {
   let f;
   try {
@@ -3893,7 +3897,7 @@ async function createMapIn(f, nw, title, layersMode, unitId = 'm') {
       if (l.type === 'height') delete m.encoding; // the defaults of the unit
       return m;
     });
-  } else metas = layersMode === 'notes' ? basicLayers(unitId).filter(m => m.type === 'notes') : basicLayers(unitId);
+  } else metas = layersMode === 'none' ? [] : layersMode === 'notes' ? basicLayers(unitId).filter(m => m.type === 'notes') : basicLayers(unitId);
   const layers = metas.map(m => makeLayer(m, proj));
   toast('Writing the new map…', 60000);
   for (const l of layers) {

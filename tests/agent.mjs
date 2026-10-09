@@ -387,6 +387,13 @@ try {
   check(await until(async () => fs.existsSync(enemiesFile) && JSON.parse(fs.readFileSync(enemiesFile, 'utf8')).items.length === 1, 8000), 'its changes are saved into the folder');
   fs.writeFileSync(path.join(newMap, 'layers', 'notes.json'), '{"items": [\n{"id":1,"x":0,"z":0,"text":"written by a script"}\n]}\n');
   check(await until(`gwp.layerById('notes').items[0]?.text === 'written by a script'`, 8000), 'a change made on the disk shows up (watching through the server)');
+  // a map without layers: the app works with an empty list, and the agent adds its own
+  const bare = await call('create_map', { path: path.join(tmpRoot, 'bare'), title: 'Bare', width: 100, layers: 'none' });
+  const bareState = await ev(`({ n: gwp.S.layers.length, title: gwp.S.project?.title, rows: document.querySelectorAll('#layer-list .layer-row').length })`);
+  const made = await call('create_layer', { name: 'Ideas', type: 'notes' });
+  const info0 = await call('get_map_info');
+  check(bare.data?.layers?.length === 0 && bareState.n === 0 && bareState.rows === 0 && bareState.title === 'Bare' && made.data?.id === 'ideas'
+    && info0.data?.layers_top_to_bottom?.length === 1, 'create_map with no layers; a layer added to it', JSON.stringify({ bare: bare.error || bare.data?.layers, bareState, made: made.error }));
   const copy = path.join(tmpRoot, 'island');
   fs.cpSync(DEMO, copy, { recursive: true });
   const om = await call('open_map', { path: copy });
