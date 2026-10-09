@@ -3806,7 +3806,8 @@ function renderSaveState() {
   t.innerHTML = '';
   if (folder) { // the project folder: bottom right
     const ok = S.access === 'granted';
-    t.title = ok ? 'The project folder: the tool reads and writes it and checks it for changes every second' : 'No access to the folder';
+    t.title = (ok ? 'The project folder: the tool reads and writes it and checks it for changes every second' : 'No access to the folder')
+      + (S.projectPath ? `\n${S.projectPath}` : '');
     t.append(ME.icon('folder-open'), el('b', {}, `${folder.name}/`), ok ? (S.lock ? '· locked (edit.lock)' : '· watching') : '· no access');
     if (!ok) t.append(el('button', { onclick: reconnect }, 'Reconnect'));
   }
@@ -3939,7 +3940,7 @@ ME.app = {
   world, mpp, toCell, layerById, canEdit, editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
   renderAll, renderLayers, renderProps, renderOptions, requestRender, renderSaveState, markMeta, viewChanged,
   insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, mapUnit, fmt, fmtLen,
-  itemCenter, selectedItems, saveUi, eventPos,
+  itemCenter, selectedItems, saveUi, eventPos, metaDirty,
 };
 
 window.gwp = { // for the console and tests

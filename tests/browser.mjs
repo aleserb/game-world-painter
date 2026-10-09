@@ -82,8 +82,9 @@ export async function openBrowser({ localStorage = {}, width = 1500, height = 95
   return {
     origin, send, ev, until, errors,
     async openDemo() {
-      for (const f of ['metadata.json', ...fs.readdirSync(path.join(DEMO, 'layers')).map(f => 'layers/' + f)]) await opfsWrite('demo/' + f, fs.readFileSync(path.join(DEMO, f)));
-      await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo'); await gwp.connect(d); })()`);
+      // named like the folder in the repository, so the MCP server can find it there (get_project_path)
+      for (const f of ['metadata.json', ...fs.readdirSync(path.join(DEMO, 'layers')).map(f => 'layers/' + f)]) await opfsWrite('demo-island/' + f, fs.readFileSync(path.join(DEMO, f)));
+      await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo-island'); await gwp.connect(d); })()`);
       await until('gwp.S.layers.length > 0 && !gwp.busy');
     },
     async close() {

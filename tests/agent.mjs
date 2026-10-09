@@ -2,7 +2,9 @@
 // (mcp/server.mjs, started as an agent would start it: stdio), and an MCP client calls every tool.
 //
 //   node tests/agent.mjs        (CHROME=/path/to/chrome to choose the browser)
-import { openBrowser, sleep } from './browser.mjs';
+import path from 'node:path';
+import { openBrowser, sleep, DEMO } from './browser.mjs';
+import { SERVER_TOOLS } from '../mcp/lib/tools.mjs';
 import { startStdio, initialize, freePort } from '../mcp/test/helpers.mjs';
 
 let failures = 0;
@@ -36,12 +38,23 @@ try {
   check(led.includes('on'), 'the LED is green', led);
 
   const tools = (await mcp.request('tools/list', {})).result.tools.map(t => t.name);
-  const missing = await ev(`${JSON.stringify(tools)}.filter(t => typeof ME.agentTools[t] !== 'function')`);
-  check(missing.length === 0 && tools.length === 20, 'every MCP tool runs in the app', missing.join(', '));
+  const inApp = tools.filter(t => !SERVER_TOOLS.has(t));
+  const missing = await ev(`${JSON.stringify(inApp)}.filter(t => typeof ME.agentTools[t] !== 'function')`);
+  check(missing.length === 0 && tools.length === 21, 'every MCP tool runs in the app (or the server)', missing.join(', '));
 
   // looking
   const info = await call('get_map_info');
   check(info.data?.layers_top_to_bottom?.length === 14 && info.data.zones?.names.includes('village') && info.data.unit.label === 'm', 'get_map_info', info.error || JSON.stringify(info.data?.zones));
+  // the folder on disk: the OPFS copy has the same metadata.json as examples/demo-island, found from the working directory
+  const where = await call('get_project_path');
+  check(where.data?.path === DEMO && /working directory/.test(where.data.found_by) && where.data.layer_files.length === 14
+    && where.data.layer_files.some(l => l.file === path.join(DEMO, 'layers', 'trees.png')) && where.data.unsaved_in_app.layers.length === 0,
+  'get_project_path finds the folder on disk', where.error || JSON.stringify(where.data).slice(0, 300));
+  check(await until(`ME.app.S.projectPath === ${JSON.stringify(DEMO)} && document.getElementById('target').title.includes(${JSON.stringify(DEMO)})`, 3000), 'the app remembers the path and shows it');
+  const where2 = await call('get_project_path');
+  check(where2.data?.found_by === 'remembered by the app', 'the next time it is remembered', where2.data?.found_by);
+  const info2 = await call('get_map_info');
+  check(info2.data?.folder?.path === DEMO && info2.data.folder.name === 'demo-island', 'get_map_info tells the folder', JSON.stringify(info2.data?.folder));
   const ctx0 = await call('get_user_context');
   check(ctx0.data && ctx0.data.selected_area === null && ctx0.data.active_layer, 'get_user_context', ctx0.error);
   const img = await call('render_map', { region: { zone: 'village' }, highlight: { zone: 'village' }, size: 512 });
@@ -129,6 +142,7 @@ try {
   await ev(`gwp.layerById('water').meta.locked = false; true`);
   // switching off
   await ev(`document.getElementById('agent-on').click(); true`);
+  await until(async () => (await (await fetch(`http://127.0.0.1:${port}/status`)).json()).app.connected === false, 5000);
   const offR = await call('get_map_info');
   check(/not connected/.test(offR.error || ''), 'switched off: the agent is told to turn it on', offR.error);
   check(b.errors.length === 0, 'no errors in the page', b.errors.slice(0, 3).join(' | '));

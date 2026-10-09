@@ -148,8 +148,13 @@ const TABS = {
   settings: ['Settings', () => {
     const url = el('input', { value: S.url, spellcheck: false });
     const flag = (key, title, hint) => el('label', { class: 'check-row' }, el('input', { type: 'checkbox', class: 'switch', checked: S[key], onchange: e => { S[key] = e.target.checked; agent.saveSettings(); render(); } }), el('span', {}, el('b', {}, title), el('span', { class: 'muted small' }, hint)));
+    const folder = ME.app.folder, fp = el('input', { value: ME.app.S.projectPath || '', spellcheck: false, disabled: !folder,
+      placeholder: folder ? `The full path of "${folder.name}" — found by the agent, or paste it` : 'No map is open',
+      onchange: e => agent.setProjectPath(e.target.value) });
     return [
       el('div', { class: 'row' }, el('label', {}, 'Server URL'), url, el('button', { type: 'button', onclick: () => { agent.setUrl(url.value); render(); } }, 'Connect')),
+      el('div', { class: 'row' }, el('label', {}, 'Map folder'), fp),
+      el('p', { class: 'muted small' }, 'Where this map is on the disk: the browser does not tell, so the MCP server finds it when an agent asks (get_project_path) and the app remembers it.'),
       el('p', { class: 'muted small' }, `Another port: start the server with --port <n> (or GWP_MCP_PORT) and put the same port here.`),
       flag('canWrite', 'Let the agent change the map', 'Off: it can only look, measure and point at things.'),
       flag('confirmDeletes', 'Ask before the agent deletes', 'A dialog here before items are deleted.'),

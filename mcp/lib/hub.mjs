@@ -156,7 +156,7 @@ export class Hub {
       if (c.session !== app.session) continue;
       clearTimeout(c.timer);
       this.calls.delete(id);
-      c.reject(new Error(`GameWorld Painter disconnected during the call (${why}). Check the app and try again.`));
+      c.reject(Object.assign(new Error(`GameWorld Painter disconnected during the call (${why}). If the user turned AI Agent off, ask them to turn it on; then try again.`), { fromApp: true }));
     }
     this.o.log?.(`app disconnected (${why})`);
   }

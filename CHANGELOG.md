@@ -11,6 +11,8 @@
   Regions: zones, classes, mask ranges, heights, slopes, distances to layers, shapes, all / any / not. Every change
   is one undo step; read-only mode and confirmation of deletions.
 - The agent skill (`skills/game-world-painter`): the workflow, regions and recipes for common requests.
+- `get_project_path`: the full path of the map's folder on disk and of its layer files. The server finds the folder
+  (workspace roots, working directory, home) by the app's fingerprint of it; the app remembers and shows the path.
 - Vector layers: roads, rivers, borders as smooth or straight lines through points (a width per point, closed
   paths as areas, dashed borders). Path tool (D) draws them, Select edits their points; Paint into a layer turns
   them into mask, categories or height pixels. The demo has a river, a trail and a border.

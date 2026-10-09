@@ -101,8 +101,24 @@ agent.setEnabled = on => { settings.enabled = !!on; saveSettings(); if (on) conn
 agent.reconnect = () => { delay = 2000; if (settings.enabled) connect(); };
 agent.setUrl = url => { settings.url = url.trim() || DEFAULTS.url; saveSettings(); agent.reconnect(); };
 
+// The full path of the project folder on disk is known only when the MCP server found it (get_project_path) or the
+// user typed it (Settings): kept per project in this browser.
+const pathKey = () => { const { S, folder } = ME.app; return folder && S.project ? `gwp-folder-path|${folder.name}|${S.project.created || S.project.title}` : null; };
+agent.setProjectPath = p => {
+  const k = pathKey();
+  if (!k) return;
+  p = (p || '').trim();
+  if (p) localStorage.setItem(k, p); else localStorage.removeItem(k);
+  ME.app.S.projectPath = p || null;
+  ME.app.renderSaveState();
+  agent.changed();
+};
+
 /** The map title for the status in the server (the agent's view of what is open). */
 ME.onProjectOpen = () => {
+  const k = pathKey();
+  ME.app.S.projectPath = (k && localStorage.getItem(k)) || null;
+  ME.app.renderSaveState();
   if (!es || !agent.server) return;
   fetch(`${base()}/app/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: agent.session, title: ME.app.S.project?.title || '', api: API, version: VERSION }) }).catch(() => {});
 };

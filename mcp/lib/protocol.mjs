@@ -3,6 +3,8 @@
 // a request that carries `_meta["io.modelcontextprotocol/protocolVersion"]` is served statelessly as the modern
 // revision (2026-07-28), which also has `server/discover`.
 
+import { fileURLToPath } from 'node:url';
+
 export const MODERN_VERSIONS = ['2026-07-28'];
 export const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 export const SUPPORTED_VERSIONS = [...MODERN_VERSIONS, ...LEGACY_VERSIONS];
@@ -21,7 +23,9 @@ export class RpcError extends Error {
 
 /**
  * A protocol endpoint for one connection (a stdio process, or one HTTP session / stateless request stream).
- * options: {serverInfo, instructions, tools, resources, callTool(name, args, ctx) -> {content, isError}, onClient(info)}.
+ * options: {serverInfo, instructions, tools, resources, callTool(name, args, ctx) -> {content, isError}, onClient(info),
+ * send(message): the transport, for requests to the client (roots/list); without it the server asks nothing}.
+ * ctx of callTool: {client, signal, roots(): the client's workspace folders as paths (legacy clients with roots)}.
  */
 export class McpEndpoint {
   constructor(options) {
@@ -29,6 +33,36 @@ export class McpEndpoint {
     this.legacyVersion = null; // after initialize
     this.clientInfo = null;
     this.pending = new Map(); // request id -> AbortController (notifications/cancelled)
+    this.clientCapabilities = {};
+    this.outgoing = new Map(); // id of a request to the client -> {resolve, reject, timer}
+    this.nextOut = 1;
+    this.roots = null; // cached until notifications/roots/list_changed
+  }
+
+  /** Sends a request to the client (only over a transport that can: stdio). */
+  request(method, params, ms = 5000) {
+    if (!this.o.send) return Promise.reject(new Error('This transport cannot send requests to the client'));
+    const id = `gwp-${this.nextOut++}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.outgoing.delete(id); reject(new Error(`${method}: no answer from the client`)); }, ms);
+      this.outgoing.set(id, { resolve, reject, timer });
+      this.o.send({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) });
+    });
+  }
+
+  /** The client's workspace folders as paths (file:// roots), or [] when it has none or cannot tell. */
+  async listRoots() {
+    if (!this.o.send || !this.legacyVersion || !this.clientCapabilities.roots) return [];
+    if (this.roots) return this.roots;
+    try {
+      const r = await this.request('roots/list');
+      this.roots = (r?.roots || []).filter(x => typeof x.uri === 'string' && x.uri.startsWith('file:')).map(x => {
+        try { return fileURLToPath(x.uri); } catch { return null; }
+      }).filter(Boolean);
+    } catch {
+      this.roots = [];
+    }
+    return this.roots;
   }
 
   /** Handles a parsed message (or a batch). Returns the response (object, array) or null for notifications. */
@@ -44,7 +78,15 @@ export class McpEndpoint {
   async handleOne(msg) {
     if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') return error(msg?.id ?? null, ERR.INVALID_REQUEST, 'Not a JSON-RPC 2.0 message');
     const isRequest = 'id' in msg && msg.id !== null && typeof msg.method === 'string';
-    if (!('method' in msg)) return null; // a response from the client: this server sends no requests
+    if (!('method' in msg)) { // a response to a request of this server (roots/list)
+      const out = this.outgoing.get(msg.id);
+      if (out) {
+        this.outgoing.delete(msg.id);
+        clearTimeout(out.timer);
+        if (msg.error) out.reject(new Error(msg.error.message || 'error')); else out.resolve(msg.result);
+      }
+      return null;
+    }
     try {
       const result = await this.dispatch(msg, isRequest);
       return isRequest ? { jsonrpc: '2.0', id: msg.id, result } : null;
@@ -74,6 +116,7 @@ export class McpEndpoint {
         const asked = params.protocolVersion;
         this.legacyVersion = LEGACY_VERSIONS.includes(asked) ? asked : LEGACY_VERSIONS[0];
         this.clientInfo = params.clientInfo || { name: 'unknown client' };
+        this.clientCapabilities = params.capabilities || {};
         this.o.onClient?.(this.clientInfo);
         return {
           protocolVersion: this.legacyVersion,
@@ -83,7 +126,9 @@ export class McpEndpoint {
         };
       }
       case 'notifications/initialized':
+        return null;
       case 'notifications/roots/list_changed':
+        this.roots = null;
         return null;
       case 'notifications/cancelled': {
         this.pending.get(params.requestId)?.abort(params.reason || 'cancelled');
@@ -114,7 +159,7 @@ export class McpEndpoint {
         const ac = new AbortController();
         if (isRequest) this.pending.set(msg.id, ac);
         try {
-          const r = await this.o.callTool(name, args, { client: this.clientInfo, signal: ac.signal });
+          const r = await this.o.callTool(name, args, { client: this.clientInfo, signal: ac.signal, roots: () => this.listRoots() });
           return { resultType: 'complete', ...r };
         } finally {
           this.pending.delete(msg.id);

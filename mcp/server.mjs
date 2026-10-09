@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { McpEndpoint, toolResult, toolError, error as rpcError, ERR } from './lib/protocol.mjs';
+import { locateProject } from './lib/locate.mjs';
 import { TOOLS, INSTRUCTIONS, API_VERSION, SLOW_TOOLS } from './lib/tools.mjs';
 import { Hub, AppNotConnected, DEFAULT_PORT, DEFAULT_ORIGINS } from './lib/hub.mjs';
 
@@ -121,27 +123,65 @@ function startHello() {
   helloTimer.unref();
 }
 
+/** Runs a tool in the app (through the hub here, or the one of another process); returns its raw result or throws. */
+async function appCall(name, args, ctx) {
+  if (role === 'none') await startRole();
+  if (role === 'hub') return hub.callApp(name, args, ctx.client || localClient, ctx.signal);
+  if (role === 'relay') {
+    let r;
+    try {
+      r = await postJson('/relay/call', { tool: name, args, client: ctx.client || localClient, agent: agentId }, ctx.signal);
+    } catch (e) {
+      if (ctx.signal?.aborted) throw e;
+      await startRole(); // the hub is gone: take over and run it here
+      if (role !== 'hub') throw e;
+      return hub.callApp(name, args, ctx.client || localClient, ctx.signal);
+    }
+    if (!r.ok) throw Object.assign(new Error(r.error), { plain: true });
+    return r.result;
+  }
+  throw Object.assign(new Error(`The port ${opts.port} is used by another program, so GameWorld Painter cannot connect. Start the MCP server with --port <another port> and set that port in the app (AI Agent → Settings).`), { plain: true });
+}
+
 async function callTool(name, args, ctx) {
   try {
-    if (role === 'none') await startRole();
-    if (role === 'hub') return toolResult(await hub.callApp(name, args, ctx.client || localClient, ctx.signal));
-    if (role === 'relay') {
-      let r;
-      try {
-        r = await postJson('/relay/call', { tool: name, args, client: ctx.client || localClient, agent: agentId }, ctx.signal);
-      } catch (e) {
-        if (ctx.signal?.aborted) throw e;
-        await startRole(); // the hub is gone: take over and run it here
-        if (role !== 'hub') throw e;
-        return toolResult(await hub.callApp(name, args, ctx.client || localClient, ctx.signal));
-      }
-      if (!r.ok) return toolError(r.error);
-      return toolResult(r.result);
-    }
-    return toolError(`The port ${opts.port} is used by another program, so GameWorld Painter cannot connect. Start the MCP server with --port <another port> and set that port in the app (AI Agent → Settings).`);
+    if (name === 'get_project_path') return toolResult(await projectPath(args, ctx));
+    return toolResult(await appCall(name, args, ctx));
   } catch (e) {
-    return toolError(e instanceof AppNotConnected || e.fromApp ? e.message : `Error: ${e.message}`);
+    return toolError(e instanceof AppNotConnected || e.fromApp || e.plain ? e.message : `Error: ${e.message}`);
   }
+}
+
+/** get_project_path: the app describes its folder, this process finds it on the disk, the app remembers the path. */
+async function projectPath(args, ctx) {
+  const info = (await appCall('_project_folder', {}, ctx)).data;
+  const roots = ctx.roots ? await ctx.roots().catch(() => []) : [];
+  const extraDirs = (process.env.GWP_PROJECT_DIRS || '').split(path.delimiter).filter(Boolean);
+  const r = await locateProject(info, {
+    explicit: args.path, hints: info.hints, roots, cwd: process.cwd(), extraDirs,
+    searchHome: process.env.GWP_SEARCH_HOME !== '0',
+  });
+  if (!r.path) {
+    log(`project folder "${info.name}" not found (${r.why})`);
+    return {
+      data: {
+        path: null, folder_name: info.name, why: r.why, ...(r.searched ? { searched: r.searched } : {}),
+        ask_user: `Ask the user for the full path of the folder "${info.name}" (the one with metadata.json) and call get_project_path with {"path": "..."}. They can also paste it in the app: AI Agent → Settings.`,
+      },
+    };
+  }
+  if (!info.hints?.includes(r.path)) await appCall('_set_project_path', { path: r.path }, ctx).catch(() => {});
+  log(`project folder: ${r.path} (${r.found_by})`);
+  const abs = f => path.join(r.path, ...f.split('/'));
+  return {
+    data: {
+      path: r.path, found_by: r.found_by, ...(r.others ? { other_copies: r.others } : {}),
+      title: info.title, metadata: abs('metadata.json'), edit_lock: abs('edit.lock'),
+      layer_files: info.layers.map(l => ({ id: l.id, type: l.type, file: abs(l.file) })),
+      unsaved_in_app: info.unsaved, autosave: info.autosave, ...(info.edit_lock ? { edit_lock_present: true } : {}),
+      editing_files: 'The app watches the folder. To change files directly: create edit.lock (the app stops writing), write each file whole (name.tmp, then rename), delete edit.lock; the app loads the changes within a second and merges them with its unsaved edits. File formats: the resource gwp://project-format.',
+    },
+  };
 }
 
 function request(method, path, body, signal) {
@@ -170,9 +210,6 @@ const postJson = (path, body, signal) => request('POST', path, body, signal);
 const mode = opts.mode || (process.stdin.isTTY ? 'http' : 'stdio');
 
 if (mode === 'http') {
-  hubOptions.mcp.callTool = async (name, args, ctx) => {
-    try { return toolResult(await hub.callApp(name, args, ctx.client, ctx.signal)); } catch (e) { return toolError(e instanceof AppNotConnected || e.fromApp ? e.message : `Error: ${e.message}`); }
-  };
   const ok = await startRole();
   if (!ok) {
     log(role === 'relay' ? 'a server is already running on this port (an agent started it): nothing to do' : 'could not start');
@@ -183,9 +220,11 @@ if (mode === 'http') {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 } else {
+  const out = msg => process.stdout.write(JSON.stringify(msg) + '\n');
   const endpoint = new McpEndpoint({
     ...mcpOptions,
     callTool,
+    send: out, // requests to the agent: roots/list
     onClient: info => {
       localClient = info;
       if (role === 'hub') hub.touchAgent(info, 'stdio', 'local');
@@ -193,7 +232,6 @@ if (mode === 'http') {
     },
   });
   await startRole().catch(e => log(`could not start the hub: ${e.message}`));
-  const out = msg => process.stdout.write(JSON.stringify(msg) + '\n');
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   rl.on('line', async line => {
     if (!line.trim()) return;

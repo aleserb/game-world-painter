@@ -40,7 +40,11 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: â€
    Use `dry_run` on `scatter_items` when you are unsure.
 5. **Check.** `describe_region` / `analyze_items` / `render_map` again: counts, spacing, coverage, nothing on roads or water.
    Fix what is off (`undo` your last step if it went wrong).
-6. **Report and show.** `show_on_map` what you changed or found (with a short message); for findings or design
+6. **Files on disk, when tools are not enough.** `get_project_path` gives the folder of the map on this computer and
+   every layer file (PNG, JSON) â€” for scripts, image tools, converting or exporting. Check `unsaved_in_app` first
+   (ask the user to save, or wait for autosave); to write files, create `edit.lock`, write whole files, then delete it:
+   the app reloads them. If the folder is not found, ask the user for its path and pass it as `path`.
+7. **Report and show.** `show_on_map` what you changed or found (with a short message); for findings or design
    reasons, add notes with `add_items` on the notes layer. Tell the user what you did in numbers (how many, where, why).
 
 ## Principles

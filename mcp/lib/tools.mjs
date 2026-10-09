@@ -40,6 +40,13 @@ export const TOOLS = [
     annotations: ro,
   },
   {
+    name: 'get_project_path',
+    title: 'Project folder on disk',
+    description: 'The full path of the project folder open in the app on this computer (the folder with metadata.json and layers/), the path of every layer file, and what the app has not saved yet. Use it to read or change the files with other tools (scripts, image tools, exporters). The browser does not reveal paths, so the server finds the folder — in your workspace, your working directory, then the home folder — and checks it is the same one (its metadata.json). If it is not found, ask the user for the path and pass it as "path".',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'A folder to check (e.g. a path the user told you); it is remembered when it is the right one' } }, additionalProperties: false },
+    annotations: ro,
+  },
+  {
     name: 'render_map',
     title: 'Look at the map',
     description: 'An image of the map from above (north up) with a coordinate grid: the whole map, the view, or a region. Look before and after changes. Optional highlight of a region.',
@@ -367,6 +374,9 @@ export const TOOLS = [
   },
 ];
 
+/** Tools that the server runs itself (with help from the app), not the page. */
+export const SERVER_TOOLS = new Set(['get_project_path']);
+
 /** Tools that change the map: they fail while the user allows reading only. */
 export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 
@@ -376,6 +386,7 @@ export const SLOW_TOOLS = new Set(['delete_items']);
 export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world seen from above, open in the user's browser. You read it and change it through these tools; every change appears at once in the app, and the user can undo it (Ctrl+Z).
 
 - Start with get_map_info (layers, unit, zones) and get_user_context ("this area" means the user's selected area: {"area":"selection"}).
+- get_project_path gives the folder of the map on disk (metadata.json, the layer PNG and JSON files) for work with files and scripts.
 - Look with render_map; measure with describe_region, find_items, find_spots, analyze_items, analyze_walkability, find_route.
 - Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch: each call is one undo step.
 - ${REGION_DOC.replace(/\n/g, '\n  ')}

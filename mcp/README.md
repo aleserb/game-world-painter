@@ -46,6 +46,7 @@ Later the server will be on npm: `npx -y game-world-painter-mcp` instead of `nod
 |------|-|
 | `get_map_info` | Start here: unit, bounds, every layer with what it holds, zones, what the user looks at |
 | `get_user_context` | The selected area and items, the active layer, the view, the cursor |
+| `get_project_path` | The full path of the map's folder on this computer and of every layer file, what the app has not saved |
 | `render_map` | An image of the map (north up) with a coordinate grid; a highlight |
 | `describe_region` | Everything in a region: size, mask coverage, class shares, heights and slopes, items by kind |
 | `read_layer` | A coarse grid of a mask, categories or height layer |
@@ -81,6 +82,13 @@ The server also offers the skill and the [project format](../docs/project-format
   legacy clients, stateless with header checks for modern ones. JSON-RPC batches are accepted.
 - **Undo**: each tool call that changes the map is one step named “AI: …” in the app. The agent's `undo` only undoes
   its own latest steps.
+- **The folder on disk** (`get_project_path`): browsers do not reveal paths, so the app sends what identifies its folder
+  (the name, a SHA-256 of `metadata.json`, the sizes and dates of the layer files) and the server finds it on disk. It
+  looks in the path the app remembers, the agent's workspace roots (MCP `roots/list`), its working directory, the folders
+  in `GWP_PROJECT_DIRS`, then the home folder (`GWP_SEARCH_HOME=0` turns that off; on macOS Desktop, Documents and
+  Downloads come last, as macOS may ask before they are read). Tool and system folders (`node_modules`, `.git`,
+  `Library`…) are skipped; the search stops after 8 s. The app remembers the path and shows it (the folder in the
+  bottom bar, AI Agent → Settings, where the user can also type it).
 
 ## Security
 
@@ -107,6 +115,9 @@ node server.mjs setup        print the setup for each agent
 | `--timeout` | Seconds a tool call may take in the app (deletions that wait for the user: 10×) |
 | `--quiet` | No log on stderr (the log never goes to stdout) |
 
+Environment: `GWP_MCP_PORT` (the port), `GWP_PROJECT_DIRS` (folders to search for the map's folder, separated by
+`:` or `;` on Windows), `GWP_SEARCH_HOME=0` (do not search the home folder).
+
 ## Troubleshooting
 
 - **The LED stays amber**: no server at the app's URL. Agents start it when they start; check that the agent lists
@@ -120,7 +131,7 @@ node server.mjs setup        print the setup for each agent
 ## Development
 
 ```
-node --test mcp/test/*.test.mjs     the protocol, the bridge (with a fake app), origins, relays, HTTP
+node --test mcp/test/*.test.mjs     the protocol, the bridge (with a fake app), origins, relays, HTTP, the folder search
 node tests/agent.mjs                the app in headless Chrome + the server + every tool (Node 22+, Chrome)
 ```
 

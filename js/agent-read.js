@@ -74,6 +74,7 @@ T.get_map_info = () => {
       axes: 'x grows east (right), z grows south (down): north is up; yaw in degrees, positive turns counter-clockwise seen from above',
       layers_top_to_bottom: [...S.layers].reverse().map(L => layerFacts(g, L)),
       zones: Z ? { layer: Z.id, names: Z.meta.classes.slice(1).map(c => c.name) } : null,
+      folder: { name: A().folder?.name || null, path: S.projectPath || null, note: 'get_project_path finds the full path on disk' },
       user: userContext(g, true),
     },
   };
@@ -100,6 +101,40 @@ function userContext(g, short = false) {
 }
 
 T.get_user_context = () => ({ data: userContext(G()) });
+
+// ------------------------------------------------------------------------------------------------ the folder on disk
+
+/** What identifies this project folder; the MCP server finds it on disk with it (get_project_path in mcp/server.mjs). */
+T._project_folder = async () => {
+  const g = G(), f = A().folder, { S } = g;
+  if (!f) fail('No project folder is open in the app');
+  const meta = await f.file('metadata.json');
+  if (!meta) fail(`The folder "${f.name}" has no metadata.json`);
+  const buf = await meta.arrayBuffer();
+  let sha256 = null;
+  try { sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(b => b.toString(16).padStart(2, '0')).join(''); } catch { /* no crypto.subtle */ }
+  const files = [];
+  for (const L of S.layers.slice(0, 60)) {
+    const file = await f.file(L.file).catch(() => null);
+    if (file) files.push({ path: L.file, size: file.size, mtime: file.lastModified });
+  }
+  return {
+    data: {
+      name: f.name, title: S.project.title,
+      metadata: { size: buf.byteLength, ...(sha256 ? { sha256 } : { text: new TextDecoder().decode(buf) }) },
+      files, hints: S.projectPath ? [S.projectPath] : [],
+      layers: S.layers.map(L => ({ id: L.id, type: L.type, file: L.file })),
+      unsaved: { layers: S.layers.filter(L => L.dirty).map(L => L.id), settings: A().metaDirty() },
+      autosave: S.autosave, edit_lock: !!S.lock,
+    },
+  };
+};
+
+T._set_project_path = ({ path }) => {
+  if (typeof path !== 'string' || !path) fail('path?');
+  ME.agent?.setProjectPath(path);
+  return { data: { ok: true } };
+};
 
 // ------------------------------------------------------------------------------------------------ images
 

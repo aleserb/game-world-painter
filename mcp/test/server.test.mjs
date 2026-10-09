@@ -1,7 +1,7 @@
 // The MCP server without the app: protocol (legacy and modern), the bridge to a fake app, origins, relays, HTTP.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startStdio, initialize, freePort, fakeApp, req, sleep } from './helpers.mjs';
+import { startStdio, initialize, freePort, fakeApp, req, sleep, makeProject } from './helpers.mjs';
 import { TOOLS } from '../lib/tools.mjs';
 
 const META = v => ({ 'io.modelcontextprotocol/protocolVersion': v, 'io.modelcontextprotocol/clientInfo': { name: 'modern-client', version: '2.0' }, 'io.modelcontextprotocol/clientCapabilities': {} });
@@ -163,4 +163,54 @@ test('Streamable HTTP: legacy sessions and modern stateless requests', async () 
     assert.equal(old.json.error.code, -32022);
     assert.equal((await req(port, 'POST', '/mcp', { headers: { ...accept, Origin: 'https://evil.example' }, body: { jsonrpc: '2.0', id: 7, method: 'tools/list' } })).status, 403);
   } finally { await c.kill(); }
+});
+
+test('get_project_path: the folder found through the client\'s roots, its working directory; remembered in the app', async () => {
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gwp-path-')));
+  const ws = tmp(), proj = path.join(ws, 'levels', 'island');
+  const info = makeProject(proj);
+  const empty = tmp();
+  const port = await freePort();
+  let asked = 0;
+  const c = startStdio(port, [], {}, { cwd: empty, onRequest: m => (m === 'roots/list' ? (asked++, { roots: [{ uri: `file://${ws}`, name: 'game' }] }) : undefined) });
+  try {
+    await initialize(c, '2025-06-18', 'roots-agent', { roots: { listChanged: true } });
+    await sleep(200);
+    let remembered = null, hints = [];
+    const app = fakeApp(port, (tool, args) => {
+      if (tool === '_project_folder') return { data: { ...info, hints } };
+      if (tool === '_set_project_path') { remembered = args.path; return { data: { ok: true } }; }
+      return { data: {} };
+    });
+    await app.ready;
+    const r = await c.request('tools/call', { name: 'get_project_path', arguments: {} });
+    const d = JSON.parse(r.result.content[0].text);
+    assert.equal(d.path, proj);
+    assert.match(d.found_by, /workspace/);
+    assert.equal(d.layer_files[0].file, path.join(proj, 'layers', 'trees.png'));
+    assert.equal(d.metadata, path.join(proj, 'metadata.json'));
+    assert.equal(remembered, proj, 'the app remembers it');
+    assert.equal(asked, 1);
+    hints = [proj];
+    const again = JSON.parse((await c.request('tools/call', { name: 'get_project_path', arguments: {} })).result.content[0].text);
+    assert.equal(again.found_by, 'remembered by the app');
+    const wrong = JSON.parse((await c.request('tools/call', { name: 'get_project_path', arguments: { path: empty } })).result.content[0].text);
+    assert.equal(wrong.path, null);
+    assert.match(wrong.ask_user, /full path of the folder "island"/);
+    app.close();
+  } finally { await c.kill(); }
+  // no roots: the working directory
+  const port2 = await freePort();
+  const c2 = startStdio(port2, [], {}, { cwd: ws });
+  try {
+    await initialize(c2);
+    await sleep(200);
+    const app = fakeApp(port2, tool => (tool === '_project_folder' ? { data: info } : { data: { ok: true } }));
+    await app.ready;
+    const d = JSON.parse((await c2.request('tools/call', { name: 'get_project_path', arguments: {} })).result.content[0].text);
+    assert.equal(d.path, proj);
+    assert.match(d.found_by, /working directory/);
+    app.close();
+  } finally { await c2.kill(); }
 });
