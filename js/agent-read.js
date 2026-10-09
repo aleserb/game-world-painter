@@ -75,6 +75,10 @@ T.get_map_info = () => {
       layers_top_to_bottom: [...S.layers].reverse().map(L => layerFacts(g, L)),
       zones: Z ? { layer: Z.id, names: Z.meta.classes.slice(1).map(c => c.name) } : null,
       folder: { name: A().folder?.name || null, path: S.projectPath || null, note: 'get_project_path finds the full path on disk' },
+      review_mode: ME.agent?.settings.review && ME.agent.settings.canWrite
+        ? 'on: your changes are proposals the user accepts, asks to change (with feedback) or rejects; group related changes with begin_proposal … submit_proposal'
+        : 'off: your changes apply directly',
+      can_write: !!ME.agent?.settings.canWrite,
       user: userContext(g, true),
     },
   };

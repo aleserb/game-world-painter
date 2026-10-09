@@ -170,15 +170,22 @@ function markMeta() { S.metaVersion++; scheduleSave(); }
 // ------------------------------------------------------------------------------------------------ undo
 
 function pushUndo(entry) {
+  if (ME.agentCollect) ME.agentCollect.push(entry); // the steps of an AI proposal (js/agent-review.js)
   history.undo.push(entry);
   if (history.undo.length > 150) history.undo.shift();
   history.redo.length = 0;
   renderSaveState();
 }
 
+// An AI proposal waiting for the user's review (js/agent-review.js) holds its layers: the user does not edit them,
+// they are not saved, and its steps are not undone one by one (Accept or Reject decides).
+const review = () => (ME.agentApplying ? null : ME.agentReview);
+function heldMsg() { toast('An AI proposal is waiting for your review: accept or reject it first', 3000); }
+
 function undo() {
   if (S.draft) { S.draft = null; requestRender(); return; }
   if (S.float) { cancelFloat(); return; }
+  if (review()?.owns(history.undo.at(-1))) { heldMsg(); return; }
   const e = history.undo.pop();
   if (!e) return;
   e.undo();
@@ -240,6 +247,7 @@ function editObjects(layer, label, fn) {
 }
 
 function setMeta(layer, key, value, label) {
+  if (review()?.holds(layer)) { heldMsg(); renderProps(); return; }
   const before = structuredClone(layer.meta[key]);
   const apply = v => { layer.meta[key] = structuredClone(v); layer.metaChanged(key); markMeta(); };
   apply(value);
@@ -249,6 +257,7 @@ function setMeta(layer, key, value, label) {
 }
 
 function setLayers(newList, newActive, label) {
+  if (review()?.holdsStructure()) { heldMsg(); renderLayers(); return; }
   const before = { list: [...S.layers], active: S.active };
   const after = { list: newList, active: newActive };
   const apply = st => { S.layers = groupTogether(st.list); setActive(st.active, false); markMeta(); saveLayerView(); };
@@ -379,6 +388,7 @@ async function connectFolder(f) {
 }
 
 async function pickFolder() {
+  if (ME.agentReview?.active) { heldMsg(); return; }
   if (anyDirty() && !await ask('The unsaved changes are lost.', { title: 'Open another folder?', ok: 'Open another folder', danger: true })) return;
   let f;
   try {
@@ -472,7 +482,7 @@ async function save({ auto = false } = {}) {
     if (S.lock) return;
     let n = 0;
     for (const l of S.layers) {
-      if (!l.dirty) continue;
+      if (!l.dirty || ME.agentReview?.holds(l)) continue; // an AI proposal under review is not saved yet
       const v = l.version;
       const data = await l.fileData();
       if (l.version !== v) continue; // edited while encoding: the next save writes it
@@ -483,7 +493,7 @@ async function save({ auto = false } = {}) {
       failed.delete(l.file);
       n++;
     }
-    if (metaDirty()) {
+    if (metaDirty() && !ME.agentReview?.holdsStructure()) {
       const mv = S.metaVersion;
       const before = new Set([...S.metaBase.values()].map(m => m.file).filter(Boolean));
       await folder.write('metadata.json', metadataText());
@@ -930,7 +940,8 @@ function toCell(x, z) { const w = world(); return [(x - w.x0) / mpp(), (z - w.z0
 function canEdit(layer, quiet) {
   if (!layer) return false;
   let msg = null;
-  if (layer.meta.locked) msg = `“${layer.meta.name}” is locked: unlock it in the layer list`;
+  if (review()?.holds(layer)) msg = `An AI proposal on “${layer.meta.name}” is waiting for your review: accept or reject it first`;
+  else if (layer.meta.locked) msg = `“${layer.meta.name}” is locked: unlock it in the layer list`;
   else if (!layer.meta.visible) msg = `“${layer.meta.name}” is hidden`;
   if (msg && !quiet) toast(msg);
   return !msg;
@@ -2773,6 +2784,7 @@ function selectGroup(g) {
 
 /** Changes the group of a layer: it goes to the top of that group (of its old one, for a new group). One undo step. */
 function setLayerGroup(L, g) {
+  if (review()?.holds(L) || review()?.holdsStructure()) { heldMsg(); renderLayers(); renderProps(); return; }
   const before = L.meta.group, old = groupOf(L);
   const list = S.layers.filter(l => l !== L);
   const anchor = list.filter(l => groupOf(l) === g).at(-1) || list.filter(l => groupOf(l) === old).at(-1);
@@ -3417,6 +3429,7 @@ function sameWorld(a, b) {
  *  open map another unit either converts its numbers (the map keeps its real size) or only renames the unit. */
 function openMapDialog(mode) {
   if (mode === 'size' && !S.project) return;
+  if (ME.agentReview?.active) { heldMsg(); return; }
   const dlg = $('#map-dlg'), form = dlg.querySelector('form'), f = n => form.elements.namedItem(n);
   const w = S.project ? S.project.world : EMPTY_WORLD, from = S.project?.unit || 'm';
   dlg.querySelector('h3').textContent = mode === 'new' ? 'New map' : 'Map size';
@@ -3818,7 +3831,7 @@ function renderSaveState() {
   else if (busy && pending) state('muted', null, 'Saving…');
   else if (pending) {
     state('dirty', 'circle-alert', (dirty ? `Unsaved: ${dirty} layer(s)` : 'Unsaved layer settings') +
-      (S.lock ? ` — ${LOCK}: waiting for the agent` : S.access !== 'granted' && folder ? ' — no access to the folder' : ''));
+      (ME.agentReview?.active ? ' — the AI proposal waits for your review' : S.lock ? ` — ${LOCK}: waiting for the agent` : S.access !== 'granted' && folder ? ' — no access to the folder' : ''));
   } else if (S.project) state('ok', 'circle-check', 'All changes saved', S.savedAt ? `Saved ${S.savedAt.toLocaleTimeString()}` : '');
   else state('muted', null, '');
   t.innerHTML = '';
@@ -3958,7 +3971,7 @@ ME.app = {
   world, mpp, toCell, layerById, canEdit, editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
   renderAll, renderLayers, renderProps, renderOptions, requestRender, renderSaveState, markMeta, viewChanged,
   insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, mapUnit, fmt, fmtLen,
-  itemCenter, selectedItems, saveUi, eventPos, metaDirty,
+  itemCenter, selectedItems, saveUi, eventPos, metaDirty, scheduleSave, afterHistory: () => { pruneSelection(); renderAll(); },
 };
 
 window.gwp = { // for the console and tests

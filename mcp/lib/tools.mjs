@@ -366,9 +366,30 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'begin_proposal',
+    title: 'Start a proposal (review mode)',
+    description: 'In review mode (get_map_info → review_mode on), every change is a proposal the user accepts, asks to change or rejects. To show several related changes as one proposal, call begin_proposal, make the changes (they apply at once, held until the user decides), then submit_proposal. Without it each changing call is its own proposal and waits for the decision. Returns nothing to do when review mode is off.',
+    inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'What the user is asked to review, e.g. "Abandoned village: ruins, rubble, overgrowth"' }, description: { type: 'string', description: 'Why and how, briefly' } }, required: ['title'], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'submit_proposal',
+    title: 'Submit the proposal for review',
+    description: 'Shows the open proposal to the user and waits for the decision (up to "wait" seconds): accepted (kept and saved), changes_requested (undone; "feedback" says what the user wants instead: make a new proposal), rejected (undone), or pending (call wait_for_review).',
+    inputSchema: { type: 'object', properties: { summary: { type: 'string', description: 'What you did and why, for the user' }, wait: { type: 'integer', minimum: 0, maximum: 110, description: 'Seconds to wait for the decision (default 45)' } }, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'wait_for_review',
+    title: 'Wait for the user\'s decision',
+    description: 'Waits for the user to decide on a proposal (up to "wait" seconds) and returns the decision: accepted, changes_requested (with "feedback"), rejected, or pending (still waiting: call again).',
+    inputSchema: { type: 'object', properties: { id: { type: 'integer', description: 'The proposal (default: the latest)' }, wait: { type: 'integer', minimum: 0, maximum: 110, description: 'Seconds (default 45)' } }, additionalProperties: false },
+    annotations: ro,
+  },
+  {
     name: 'undo',
     title: 'Undo agent changes',
-    description: 'Undoes the latest changes made by the agent (only while they are the latest changes in the app).',
+    description: 'Undoes the latest changes made by the agent (only while they are the latest changes in the app). In review mode: withdraws your proposal that waits for review.',
     inputSchema: { type: 'object', properties: { steps: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 1' } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
@@ -380,8 +401,8 @@ export const SERVER_TOOLS = new Set(['get_project_path']);
 /** Tools that change the map: they fail while the user allows reading only. */
 export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 
-/** Tool calls that may wait for the user (a confirmation in the app): a longer timeout. */
-export const SLOW_TOOLS = new Set(['delete_items']);
+/** Tool calls that may wait for the user (a confirmation, a proposal under review): a longer timeout. */
+export const SLOW_TOOLS = new Set(['delete_items', 'submit_proposal', 'wait_for_review', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
 
 export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world seen from above, open in the user's browser. You read it and change it through these tools; every change appears at once in the app, and the user can undo it (Ctrl+Z).
 
@@ -391,4 +412,5 @@ export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world se
 - Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch: each call is one undo step.
 - ${REGION_DOC.replace(/\n/g, '\n  ')}
 - x grows east, z grows south (north is up); lengths are in the unit of the map. Keep what the user made unless asked; respect locked layers.
+- Review mode (get_map_info → review_mode): your changes are proposals. A changing call waits for the user's decision (up to 45 s; then wait_for_review): accepted — keep going; changes_requested — it was undone, redo it following "feedback"; rejected — it was undone, do not repeat it. Group related changes into one proposal with begin_proposal … submit_proposal.
 - After changing, check the result (describe_region or render_map), then show_on_map what you did and leave notes (add_items on a notes layer) to explain choices when useful.`;

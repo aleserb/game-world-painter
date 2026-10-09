@@ -8,7 +8,7 @@ const API = 1;
 const VERSION = '0.2.0';
 const KEY = 'gwp-agent';
 const WRITE = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
-const DEFAULTS = { enabled: false, url: 'http://127.0.0.1:38765', canWrite: true, confirmDeletes: true, highlight: true };
+const DEFAULTS = { enabled: false, url: 'http://127.0.0.1:38765', canWrite: true, confirmDeletes: true, highlight: true, review: false };
 
 const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; } })();
 const saveSettings = () => localStorage.setItem(KEY, JSON.stringify(settings));
@@ -116,6 +116,7 @@ agent.setProjectPath = p => {
 
 /** The map title for the status in the server (the agent's view of what is open). */
 ME.onProjectOpen = () => {
+  ME.agentReview?.drop('the map was opened again');
   const k = pathKey();
   ME.app.S.projectPath = (k && localStorage.getItem(k)) || null;
   ME.app.renderSaveState();
@@ -132,16 +133,22 @@ async function run(call) {
   agent.busy++;
   agent.changed();
   const t0 = performance.now();
-  let body;
+  let body, later = null;
   try {
-    const fn = ME.agentTools[call.tool], { ToolError } = ME.agentInternals;
+    const fn = ME.agentTools[call.tool], { ToolError } = ME.agentInternals, args = call.args || {};
     if (!fn) throw new ToolError(`This version of GameWorld Painter has no tool "${call.tool}". Ask the user to reload the page (the app may be older than the MCP server).`);
-    if (WRITE.has(call.tool) && !settings.canWrite) throw new ToolError('The user lets the agent only read the map (AI Agent → Settings in the app). Ask them to allow changes.');
-    const ctx = { canWrite: settings.canWrite, confirmDeletes: settings.confirmDeletes, client: call.client, clientName: call.client?.name };
-    const result = await fn(call.args || {}, ctx);
+    const writes = WRITE.has(call.tool) || (call.tool === 'find_route' && !!args.add_to);
+    if (writes && !settings.canWrite) throw new ToolError('The user lets the agent only read the map (AI Agent → Settings in the app). Ask them to allow changes.');
+    const review = settings.review && settings.canWrite;
+    const ctx = { canWrite: settings.canWrite, confirmDeletes: settings.confirmDeletes && !review, review, client: call.client, clientName: call.client?.name };
+    let result;
+    if (review && call.tool === 'undo') result = ME.agentReview.withdraw();
+    else if (review && writes) ({ result, later } = await ME.agentReview.run(call, () => fn(args, ctx)));
+    else result = await fn(args, ctx);
+    if (result?.deferred) { later = result.deferred; result = null; } // waits for the user's decision
     body = { ok: true, result };
-    entry.status = 'ok';
-    entry.result = result.images ? 'an image' : summarize(result.data ?? result.text);
+    entry.status = later ? 'review' : 'ok';
+    entry.result = later ? 'waiting for the user\'s review…' : result.images ? 'an image' : summarize(result.data ?? result.text);
   } catch (e) {
     const message = e instanceof ME.agentInternals.ToolError ? e.message : `Error in GameWorld Painter: ${e.message}`;
     if (!(e instanceof ME.agentInternals.ToolError)) console.error(e);
@@ -152,7 +159,21 @@ async function run(call) {
   entry.ms = Math.round(performance.now() - t0);
   agent.busy--;
   agent.changed();
-  if (cancelled.delete(call.id)) { entry.status = 'cancelled'; return; }
+  if (later) { // the next calls run meanwhile; the answer goes when the user has decided (or the wait is over)
+    later.then(result => {
+      const p = result?.data?.proposal;
+      entry.status = p?.status === 'accepted' ? 'ok' : p?.status === 'pending' ? 'review' : p ? 'rejected' : 'ok';
+      entry.result = summarize(p ? `${p.status}${p.feedback ? ': ' + p.feedback : ''}` : result.data);
+      agent.changed();
+      post(call, entry, { ok: true, result });
+    });
+    return;
+  }
+  await post(call, entry, body);
+}
+
+async function post(call, entry, body) {
+  if (cancelled.delete(call.id)) { entry.status = 'cancelled'; agent.changed(); return; }
   try {
     await fetch(`${base()}/app/result`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: agent.session, id: call.id, ...body }) });
   } catch (e) {
@@ -175,6 +196,16 @@ let flashTimer = null;
 ME.agentFeedback = {
   /** Outlines a box [x0, z0, x1, z1], a cell mask or a point for a moment; msg: a toast. */
   flash(what, msg, ms = 2600) {
+    const P = ME.agentReview?.collecting;
+    if (P && what) { // the places of a proposal stay outlined until the user decides
+      const m = { ...what };
+      if (what.mask) {
+        const g = ME.agentInternals.G(), b = ME.agentInternals.bounds(g, what.mask);
+        if (b.count) m.path = ME.maskOutline(what.mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R);
+      }
+      P.marks.push(m);
+      return;
+    }
     if (msg) ME.app.toast(`AI: ${msg}`, Math.min(ms + 400, 6000));
     if (!settings.highlight || !what) return;
     const f = { ...what, until: performance.now() + ms, ms };
@@ -197,6 +228,7 @@ function tick() {
 }
 
 ME.drawAgentOverlay = (ctx, view) => {
+  ME.agentReview?.drawMarks(ctx, view);
   const now = performance.now();
   for (const f of flashes) {
     const a = Math.max(0, Math.min(1, (f.until - now) / 600)), pulse = 0.82 + 0.18 * Math.sin(now / 160); // fades out at the end

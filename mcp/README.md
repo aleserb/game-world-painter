@@ -61,7 +61,8 @@ Later the server will be on npm: `npx -y game-world-painter-mcp` instead of `nod
 | `edit_terrain` | Raise, lower, flatten, smooth, slope (from a place to another), noise |
 | `create_layer`, `update_layer` | New layers; names, groups, colors, visibility, classes |
 | `show_on_map` | Moves the user's view to something and outlines it, with a message; can select it |
-| `undo` | Undoes the agent's latest changes |
+| `undo` | Undoes the agent's latest changes (in review mode: withdraws its proposal) |
+| `begin_proposal`, `submit_proposal`, `wait_for_review` | Review mode: group changes into one proposal, show it to the user, get the decision |
 
 Most tools take a **region**: `{"area":"selection"}`, `{"zone":"village"}`, `{"layer":"trees","min":50}`,
 `{"near":"roads","distance":8}`, `{"rect":[x0,z0,x1,z1]}`, `{"slope":{"max":25}}`, … combined with
@@ -80,6 +81,11 @@ The server also offers the skill and the [project format](../docs/project-format
 - **Protocol**: dual-era MCP. Legacy clients get the `initialize` handshake (2024-11-05 to 2025-11-25). Modern requests
   carry `_meta` per request (2026-07-28, with `server/discover`). Streamable HTTP at `/mcp` serves both: sessions for
   legacy clients, stateless with header checks for modern ones. JSON-RPC batches are accepted.
+- **Review mode** (AI Agent → Settings → *Review the agent's changes*): a change is applied but held — shown on the map
+  with a card (title, what changed, Before / After), not saved, its layers locked for the user — until the user
+  clicks **Accept** (kept and saved), **Change…** (undone; their comment goes to the agent as `feedback`) or
+  **Reject** (undone). The changing call waits for the decision up to 45 s (agents such as Codex give up on a call
+  after 60 s); after that it returns `pending` and the agent calls `wait_for_review`.
 - **Undo**: each tool call that changes the map is one step named “AI: …” in the app. The agent's `undo` only undoes
   its own latest steps.
 - **The folder on disk** (`get_project_path`): browsers do not reveal paths, so the app sends what identifies its folder

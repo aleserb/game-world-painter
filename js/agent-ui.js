@@ -34,10 +34,10 @@ sw.onchange = () => agent.setEnabled(sw.checked);
 btn.onclick = () => openDialog();
 
 function header() {
-  const [led] = STATES[agent.state] || STATES.off;
-  btn.querySelector('.led').className = `led ${led}${agent.busy ? ' busy' : ''}`;
+  const [led] = STATES[agent.state] || STATES.off, review = ME.agentReview?.active?.status === 'pending';
+  btn.querySelector('.led').className = `led ${led}${review ? ' review' : agent.busy ? ' busy' : ''}`;
   const who = agent.server?.agents?.map(a => a.name) || [];
-  btn.title = agent.busy ? `${who[0] || 'The agent'} is working on the map` : `${STATES[agent.state]?.[1] || ''}${who.length ? ': ' + who.join(', ') : ''} — click for details`;
+  btn.title = review ? 'An AI proposal is waiting for your review (on the map)' : agent.busy ? `${who[0] || 'The agent'} is working on the map` : `${STATES[agent.state]?.[1] || ''}${who.length ? ': ' + who.join(', ') : ''} — click for details`;
   sw.checked = S.enabled;
 }
 
@@ -157,7 +157,8 @@ const TABS = {
       el('p', { class: 'muted small' }, 'Where this map is on the disk: the browser does not tell, so the MCP server finds it when an agent asks (get_project_path) and the app remembers it.'),
       el('p', { class: 'muted small' }, `Another port: start the server with --port <n> (or GWP_MCP_PORT) and put the same port here.`),
       flag('canWrite', 'Let the agent change the map', 'Off: it can only look, measure and point at things.'),
-      flag('confirmDeletes', 'Ask before the agent deletes', 'A dialog here before items are deleted.'),
+      flag('review', 'Review the agent\'s changes', 'Each change becomes a proposal on the map: accept it, ask for changes (with a comment) or reject it. Until then it is not saved.'),
+      flag('confirmDeletes', 'Ask before the agent deletes', 'A dialog here before items are deleted (in review mode the proposal covers it).'),
       flag('highlight', 'Show the agent\'s changes', 'Outline what it changed or points at, for a moment.'),
       el('p', { class: 'muted small' }, 'Every change of the agent is one step of Undo (Ctrl+Z), named “AI: …”. Locked layers stay as they are.'),
     ];

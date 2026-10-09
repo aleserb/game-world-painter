@@ -40,7 +40,7 @@ try {
   const tools = (await mcp.request('tools/list', {})).result.tools.map(t => t.name);
   const inApp = tools.filter(t => !SERVER_TOOLS.has(t));
   const missing = await ev(`${JSON.stringify(inApp)}.filter(t => typeof ME.agentTools[t] !== 'function')`);
-  check(missing.length === 0 && tools.length === 21, 'every MCP tool runs in the app (or the server)', missing.join(', '));
+  check(missing.length === 0 && tools.length === 24, 'every MCP tool runs in the app (or the server)', missing.join(', '));
 
   // looking
   const info = await call('get_map_info');
@@ -128,6 +128,74 @@ try {
   const ro = await call('add_items', { layer: 'notes', items: [{ x: 0, z: 0, text: 'x' }] });
   check(/only read/.test(ro.error || ''), 'read-only mode', ro.error);
   await ev(`ME.agent.settings.canWrite = true; true`);
+  // review mode: the agent's changes are proposals the user accepts, sends back with a comment, or rejects
+  await ev(`ME.agent.settings.review = true; true`);
+  const rv = await call('get_map_info');
+  check(/^on/.test(rv.data?.review_mode || ''), 'get_map_info says review mode is on', rv.data?.review_mode);
+  const card = `(c => c && { status: c.className, title: c.querySelector('.title')?.textContent, changes: c.querySelectorAll('.changes li').length })(document.getElementById('ai-proposal'))`;
+  const click = (text, sel = '#ai-proposal button') => ev(`(b => (b.click(), true))([...document.querySelectorAll(${JSON.stringify(sel)})].find(b => b.textContent.trim() === ${JSON.stringify(text)}))`);
+  const chests = `gwp.layerById('chests').items.length`, stamp = f => ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo-island');
+    const f = await (await (await d.getDirectoryHandle('layers')).getFileHandle(${JSON.stringify(f)})).getFile(); return f.lastModified + ':' + f.size; })()`);
+  await until(`!gwp.S.layers.some(l => l.dirty)`, 8000);
+  const n0 = await ev(chests), st0 = await stamp('chests.json');
+  const p1 = call('add_items', { layer: 'chests', items: [{ kind: 'iron_chest', x: 5, z: 5 }] });
+  const c1 = await until(`(${card})?.status === 'pending' && ${card}`, 8000);
+  const held = await ev(`ME.agentReview.holds(gwp.layerById('chests')) && ${chests} === ${n0 + 1}`);
+  await sleep(1500);
+  const unsaved = (await stamp('chests.json')) === st0;
+  await ev(`gwp.undo(); true`);
+  const noUndo = (await ev(chests)) === n0 + 1;
+  await click('Before');
+  const beforeN = await ev(chests);
+  await click('After');
+  const afterN = await ev(chests);
+  await click('Accept');
+  const r1 = await p1;
+  check(c1 && held && unsaved && noUndo && beforeN === n0 && afterN === n0 + 1 && r1.data?.proposal?.status === 'accepted' && r1.data.ids?.length === 1,
+    'review: a change is held (not saved, no undo), Before / After, Accept', `${JSON.stringify(c1)} held ${held} unsaved ${unsaved} undo ${noUndo} ${beforeN}/${afterN} ${JSON.stringify(r1.data?.proposal || r1.error)}`);
+  check(await until(async () => (await stamp('chests.json')) !== st0, 8000), 'review: saved after Accept');
+  const chestId = r1.data.ids[0];
+  // a proposal of several changes, sent back with a comment
+  const sumBushes = `gwp.layerById('bushes').data.reduce((a, v) => a + v, 0)`, b0 = await ev(sumBushes);
+  const begin = await call('begin_proposal', { title: 'A camp', description: 'Crates and bushes around a fire' });
+  const part = await call('add_items', { layer: 'chests', items: [{ kind: 'crate', x: 12, z: 8 }, { kind: 'crate', x: 14, z: 9 }] });
+  await call('paint_layer', { layer: 'bushes', region: { circle: [12, 10, 6] }, value: 90 });
+  const openState = await ev(`(${card})?.status`);
+  const p2 = call('submit_proposal', { summary: 'Two crates and bushes' });
+  const c2 = await until(`(${card})?.status === 'pending' && (${card}).changes === 2 && ${card}`, 8000);
+  await click('Change…');
+  await ev(`(t => { t.value = 'Only one crate, no bushes'; t.dispatchEvent(new Event('input')); return true; })(document.querySelector('#ai-proposal textarea'))`);
+  await click('Send to the agent');
+  const r2 = await p2;
+  check(begin.data?.status === 'open' && part.data?.proposal?.status === 'open' && openState === 'open' && c2?.title === 'A camp'
+    && r2.data?.proposal?.status === 'changes_requested' && r2.data.proposal.feedback === 'Only one crate, no bushes'
+    && (await ev(chests)) === n0 + 1 && (await ev(sumBushes)) === b0,
+  'review: a proposal of several changes, sent back with a comment (undone)', JSON.stringify(r2.data?.proposal || r2.error));
+  // rejected
+  const p3 = call('update_items', { layer: 'chests', items: [{ id: chestId, kind: 'gold_chest' }] });
+  await until(`(${card})?.status === 'pending'`, 8000);
+  await click('Reject');
+  const r3 = await p3;
+  check(r3.data?.proposal?.status === 'rejected' && (await ev(`gwp.layerById('chests').items.find(i => i.id === ${chestId}).kind`)) === 'iron_chest', 'review: rejected (undone)', JSON.stringify(r3.data?.proposal));
+  // the user decides later: wait_for_review; meanwhile more changes wait
+  await call('begin_proposal', { title: 'Later' });
+  await call('add_items', { layer: 'notes', items: [{ x: 1, z: 1, text: 'later' }] });
+  const r4 = await call('submit_proposal', { wait: 1 });
+  const blocked = await call('add_items', { layer: 'notes', items: [{ x: 2, z: 2, text: 'more' }] });
+  const p5 = call('wait_for_review', { id: r4.data?.proposal?.id, wait: 30 });
+  await sleep(300);
+  await click('Accept');
+  const r5 = await p5;
+  check(r4.data?.proposal?.status === 'pending' && /waiting for the user's review/.test(blocked.error || '') && r5.data?.proposal?.status === 'accepted',
+    'review: pending, then wait_for_review; no new changes meanwhile', `${r4.data?.proposal?.status} | ${blocked.error} | ${r5.data?.proposal?.status}`);
+  // the agent withdraws its open proposal
+  await call('begin_proposal', { title: 'Oops' });
+  await call('add_items', { layer: 'notes', items: [{ x: 3, z: 3, text: 'oops' }] });
+  const notesN = await ev(`gwp.layerById('notes').items.length`);
+  const wd = await call('undo');
+  check(wd.data?.withdrawn && (await ev(`gwp.layerById('notes').items.length`)) === notesN - 1 && !(await ev(`!!document.getElementById('ai-proposal')`)), 'review: the agent withdraws its proposal', JSON.stringify(wd.data || wd.error));
+  await ev(`ME.agent.settings.review = false; true`);
+
   // the dialog
   await ev(`ME.agentUi.open(); true`);
   const dlg = await ev(`(d => [d.open, d.querySelector('.agent-status b').textContent, [...d.querySelectorAll('.tabs button')].map(b => b.textContent)])(document.getElementById('agent-dlg'))`);

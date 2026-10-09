@@ -408,3 +408,30 @@ table.keys td { padding: 2.25px 0; }
 .act.error .res { color: #ff9a9a; }
 .trouble { padding-left: 15px; }
 .trouble li { margin-bottom: 7.5px; }
+
+/* review mode: an AI proposal over the map (js/agent-review.js) */
+.led.review { background: #f0b45e; box-shadow: 0 0 8px rgba(240, 180, 94, 0.9); animation: led-pulse 1.2s ease-in-out infinite; }
+#ai-proposal {
+  position: absolute; top: 10.5px; left: 50%; transform: translateX(-50%); z-index: 5; width: min(375px, calc(100% - 24px));
+  background: rgba(35, 35, 39, 0.97); border: 1px solid rgba(240, 180, 94, 0.55); border-radius: 9px; padding: 9px 10.5px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 6px;
+}
+#ai-proposal.open { border-color: rgba(178, 120, 255, 0.55); }
+#ai-proposal .head { display: flex; align-items: center; gap: 6px; }
+#ai-proposal .head .spacer { flex: 1; }
+#ai-proposal .title { font-weight: 600; line-height: 1.35; }
+#ai-proposal .desc { color: var(--text); opacity: 0.85; white-space: pre-wrap; max-height: 120px; overflow: auto; }
+#ai-proposal .changes { margin: 0; padding-left: 15px; color: var(--muted); max-height: 110px; overflow: auto; }
+#ai-proposal .changes li { margin: 1.5px 0; }
+#ai-proposal .compare { display: flex; align-items: center; gap: 7.5px; }
+#ai-proposal .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+#ai-proposal .seg button { border-radius: 0; background: none; padding: 2.25px 9px; }
+#ai-proposal .seg button.on { background: var(--accent); color: var(--accent-text); }
+#ai-proposal .actions { display: flex; justify-content: flex-end; gap: 6px; }
+#ai-proposal .actions .accept { background: #3f9e6e; }
+#ai-proposal .actions .accept:hover { background: #4cb47f; }
+#ai-proposal .actions .danger { margin-right: auto; }
+#ai-proposal .change-box { display: flex; flex-direction: column; gap: 6px; }
+#ai-proposal textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 54px; }
+.act.review { border-left-color: #f0b45e; }
+.act.rejected { border-left-color: #c48a4a; }
