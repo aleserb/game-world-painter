@@ -207,19 +207,6 @@
     return out;
   };
 
-  ME.bytesToBase64 = function (bytes) {
-    let s = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return btoa(s);
-  };
-
-  ME.base64ToBytes = function (b64) {
-    const s = atob(b64);
-    const out = new Uint8Array(s.length);
-    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-    return out;
-  };
-
   ME.mimeOf = name => ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' })[name.split('.').pop().toLowerCase()] || 'application/octet-stream';
   ME.extOf = mime => ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' })[mime] || 'png';
 })(window.ME = window.ME || {});

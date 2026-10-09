@@ -4,9 +4,9 @@
 'use strict';
 
 const T = ME.agentTools = ME.agentTools || {};
-const { G, fail, region, regionMask, presence, itemsMask, distanceField, blur, noiseFn, rng, bounds, worldBox,
-  cellOf, cellX, cellZ, layerOf, editable, heightLayer, zonesLayer, classIndex, metersIn, fmtU, r2, num, pt, A, any } = ME.agentInternals;
-const { brief, each, inRegion, pct } = ME.agentRead;
+const { G, fail, region, itemsMask, worldBox,
+  layerOf, editable, zonesLayer, classIndex, r2, num, pt, A } = ME.agentInternals;
+const { brief, inRegion } = ME.agentRead;
 const center = it => A().itemCenter(it);
 const today = () => new Date().toISOString().slice(0, 10);
 const flash = (what, msg) => ME.agentFeedback?.flash(what, msg);
@@ -276,12 +276,7 @@ async function saveOpenMap() {
   const app = A();
   if (ME.agentReview?.active) ME.agentReview.drop('the agent opened another map (the proposal was undone)', { revert: true });
   if (app.folder && app.S.project && app.anyDirty()) {
-    // a save may be running (autosave): wait for it, then save what is left
-    for (let k = 0, end = Date.now() + 15000; k < 4 && app.anyDirty() && Date.now() < end; k++) {
-      while (app.saving && Date.now() < end) await new Promise(r => setTimeout(r, 50));
-      await app.save({ auto: true });
-    }
-    if (app.anyDirty()) fail(`The map open now ("${app.S.project.title}") has changes the app could not save: ask the user to save it or close it first`);
+    if (!(await app.settleSave())) fail(`The map open now ("${app.S.project.title}") has changes the app could not save: ask the user to save it or close it first`);
   }
 }
 

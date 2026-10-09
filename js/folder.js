@@ -15,17 +15,9 @@
 
     static get supported() { return typeof window.showDirectoryPicker === 'function'; }
 
-    /** Ask for the folder. If the user picks a folder that contains map/ (the tool folder), use map/. */
+    /** Ask the user for the folder. */
     static async pick() {
-      const handle = await window.showDirectoryPicker({ id: 'gwp', mode: 'readwrite' });
-      const f = new Folder(handle);
-      if (!(await f.exists('metadata.json'))) {
-        try {
-          const sub = await handle.getDirectoryHandle('map');
-          if (await new Folder(sub).exists('metadata.json')) return new Folder(sub);
-        } catch (err) { /* no map/ inside */ }
-      }
-      return f;
+      return new Folder(await window.showDirectoryPicker({ id: 'gwp', mode: 'readwrite' }));
     }
 
     /** 'granted', 'prompt' or 'denied'. request: ask the user (needs a click). */
@@ -64,7 +56,7 @@
 
     async exists(path) { return !!(await this.file(path)); }
 
-    /** {bytes, file} of path, or null. Remembers the version as known. */
+    /** {bytes, file} of path, or null. The caller remembers the version (remember()) once it took the content. */
     async read(path) {
       const file = await this.file(path);
       if (!file) return null;

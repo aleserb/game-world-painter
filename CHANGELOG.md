@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-09
+
+Fixes found in a review of the whole code:
+
+- Undoing a layer delete after it was saved brings the layer's file back (saving had removed it; the layer reopened
+  empty).
+- The objects of a locked layer, or of a layer held by an AI proposal, are no longer changed with the keys (Delete,
+  arrows, R, Ctrl+D), the Properties panel, notes or drags.
+- Opening a folder without a map (or with a broken metadata.json) closes the map open before, so nothing of it is
+  written into that folder; "New map here" makes the basic layers.
+- Saving and the folder: another folder waits for a running save; what is on the disk is what was written (edits made
+  while writing are saved next time); Ctrl+S during a save runs after it with Autosave off too; the folder is not
+  checked in the middle of a stroke or a drag; a size or unit changed here (not saved yet) survives a change of
+  metadata.json on the disk, and the disk's layer order is taken unless the layer list was changed here; a layer
+  deleted on the disk but changed here is listed in metadata.json again.
+- Each map keeps its own view, folded groups and layer visibility in the browser (before, a map opened with the
+  zoom of the previous one).
+- Reset the layout shows the 3D preview again; opening the 3D preview twice no longer leaks a timer; layer thumbnails
+  no longer keep closed maps in memory.
+- "Hide all" keeps the reference pictures (was: one layer named "background", a leftover of the game the tool was
+  made for); a picked folder is used as it is (no more looking into a map/ subfolder).
+- Smaller: the area fill of paths is one undo step; the object list uses the layer's label; pasting objects and the
+  rotate handle follow the unit of the map; areas are rounded, not cut; notes get the local date.
+- MCP server: an app and a server of different API versions tell the agent which one to update; one agent entry per
+  HTTP session; the undocumented --host option is gone (the server listens on 127.0.0.1 only).
+- Code: unused code, exports and styles removed, the agent dialog's styles scoped to it, one shared element helper;
+  ESLint in CI (`eslint.config.mjs`); regression checks for the fixes above in the smoke test.
 
 - The 3D preview panel looks cleaner: the camera presets (Overview, Top, Close-up, with icons) are one segmented
   control that shows which one is in use until the camera moves; what covers the ground and the height scale float

@@ -12,19 +12,19 @@ const ctx = canvas.getContext('2d');
 const RASTER = ['mask', 'category', 'height'];
 const ITEMS = ['objects', 'notes', 'vector']; // layers of items: Select area selects the items in its shape
 const TOOLS = [
-  { id: 'select', key: 'v', name: 'Select', icon: '↖', types: null },
-  { id: 'pan', key: 'h', name: 'Pan', icon: '✥', types: null },
-  { id: 'brush', key: 'b', name: 'Brush', icon: '✎', types: RASTER, gap: true },
-  { id: 'eraser', key: 'e', name: 'Eraser', icon: '⌫', types: ['mask', 'category'] },
-  { id: 'smooth', key: 's', name: 'Smooth', icon: '≈', types: ['mask', 'height'] },
-  { id: 'fill', key: 'g', name: 'Fill', icon: '◪', types: ['mask', 'category'] },
-  { id: 'shape', key: 'u', name: 'Shapes', icon: '⬠', types: RASTER },
-  { id: 'picker', key: 'i', name: 'Pick value', icon: '⊙', types: RASTER },
-  { id: 'area', key: 'l', name: 'Select area', icon: '⬚', types: [...RASTER, ...ITEMS], gap: true },
-  { id: 'add', key: 'a', name: 'Add object', icon: '✚', types: ['objects'], gap: true },
-  { id: 'path', key: 'd', name: 'Path', icon: '〰', types: ['vector'] },
-  { id: 'note', key: 'n', name: 'Note', icon: '🗒', types: null },
-  { id: 'measure', key: 'm', name: 'Measure', icon: '⟷', types: null, gap: true },
+  { id: 'select', key: 'v', name: 'Select', types: null },
+  { id: 'pan', key: 'h', name: 'Pan', types: null },
+  { id: 'brush', key: 'b', name: 'Brush', types: RASTER },
+  { id: 'eraser', key: 'e', name: 'Eraser', types: ['mask', 'category'] },
+  { id: 'smooth', key: 's', name: 'Smooth', types: ['mask', 'height'] },
+  { id: 'fill', key: 'g', name: 'Fill', types: ['mask', 'category'] },
+  { id: 'shape', key: 'u', name: 'Shapes', types: RASTER },
+  { id: 'picker', key: 'i', name: 'Pick value', types: RASTER },
+  { id: 'area', key: 'l', name: 'Select area', types: [...RASTER, ...ITEMS] },
+  { id: 'add', key: 'a', name: 'Add object', types: ['objects'] },
+  { id: 'path', key: 'd', name: 'Path', types: ['vector'] },
+  { id: 'note', key: 'n', name: 'Note', types: null },
+  { id: 'measure', key: 'm', name: 'Measure', types: null },
 ];
 const EDIT_TOOLS = ['brush', 'eraser', 'smooth', 'fill', 'shape', 'picker', 'area', 'add', 'path'];
 const MARKERS = ['circle', 'square', 'diamond', 'triangle', 'cross'];
@@ -103,6 +103,7 @@ function requestRender() {
   requestAnimationFrame(() => { renderQueued = false; render(); renderStatus(); });
 }
 
+/** An element: attrs (class, on<event> listeners, properties, attributes) and children (nodes, strings, arrays). */
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -261,7 +262,10 @@ function setLayers(newList, newActive, label) {
   if (review()?.holdsStructure()) { heldMsg(); renderLayers(); return; }
   const before = { list: [...S.layers], active: S.active };
   const after = { list: newList, active: newActive };
-  const apply = st => { S.layers = groupTogether(st.list); setActive(st.active, false); markMeta(); saveLayerView(); };
+  const apply = st => {
+    for (const l of st.list) if (!S.layers.includes(l)) l.dirty = true; // back (undo of a delete): saving removed its file
+    S.layers = groupTogether(st.list); setActive(st.active, false); markMeta(); saveLayerView();
+  };
   apply(after);
   pushUndo({ label, undo: () => apply(before), redo: () => apply(after) });
 }
@@ -287,10 +291,13 @@ S.autosave = localStorage.getItem('gwp-autosave') !== 'off';
 S.lock = false;
 S.access = 'none'; // none | granted | prompt (the stored folder needs a click) | lost
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 function metaDirty() { return S.metaVersion !== S.metaSaved; }
 function anyDirty() { return metaDirty() || S.layers.some(l => l.dirty); }
 
-const META_LOCAL = ['visible', 'opacity', 'locked']; // kept per browser; the file has the defaults
+const META_LOCAL = ['visible', 'opacity', 'locked']; // view settings, kept per map in this browser; the file has the defaults
+/** The open map in this browser's storage (its view, its layers' visibility, its path): the folder and its creation note. */
+const mapKey = () => (S.project ? `${folder?.name || ''}|${S.project.created || S.project.title}` : null);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /** What the tool knows of metadata.json: the settings of every layer, by id. */
@@ -339,6 +346,8 @@ async function openProject(project) {
   S.proj = projOf(S.project.world, S.project.unit);
   S.metaVersion = S.metaSaved = 0;
   S.metaBase = metaBaseOf(project.layers || []);
+  S.projectBase = { world: structuredClone(S.project.world), unit: S.project.unit }; // as in metadata.json
+  S.solo = null; S.layerSel = new Set(); S.groupSel = null; S.vtx = null;
   S.sel = { layer: null, ids: new Set() };
   S.active = null;
   closeNoteEditor(false);
@@ -367,18 +376,23 @@ async function openProject(project) {
   ME.onProjectOpen?.();
 }
 
-/** Use a folder: read its metadata.json, then watch it. */
+/** Use a folder: read its metadata.json, then watch it. A save of the map open before is finished first (not
+ *  written into this folder); the callers have saved it or asked the user. */
 async function connectFolder(f) {
+  clearTimeout(saveTimer);
+  saveAgain = false;
+  while (busy) await sleep(50);
   folder = f;
   S.access = 'granted';
   if (store.available) store.set('folder', f.root).catch(err => console.warn(err));
   const meta = await folder.readText('metadata.json');
-  if (!meta) { showBanner('nometa'); renderSaveState(); return; }
+  if (!meta) { closeProject(); showBanner('nometa'); renderSaveState(); return; }
   let project;
   try {
     project = JSON.parse(meta.text);
     if (!Array.isArray(project.layers)) throw new Error('no "layers" list');
   } catch (err) {
+    closeProject();
     showBanner('badmeta', err.message);
     return;
   }
@@ -386,6 +400,34 @@ async function connectFolder(f) {
   await openProject(project);
   S.lock = await folder.exists(LOCK);
   renderSaveState();
+}
+
+/** No map open (the folder has none, or its metadata.json cannot be read): nothing of the map before stays, so
+ *  nothing of it is written into this folder. */
+function closeProject() {
+  if (!S.project) return;
+  ME.agentReview?.drop('the map was closed');
+  closeNoteEditor(false);
+  Object.assign(S, { project: null, layers: [], active: null, sel: { layer: null, ids: new Set() }, layerSel: new Set(), groupSel: null,
+    area: null, float: null, draft: null, vtx: null, solo: null, metaVersion: 0, metaSaved: 0 });
+  history.undo = [];
+  history.redo = [];
+  failed.clear();
+  $('#project-title').textContent = '';
+  document.title = 'GameWorld Painter';
+  view3d.reset();
+  renderAll();
+}
+
+/** Waits for a running save or check of the folder, then saves what is left. True: nothing is unsaved. */
+async function settleSave() {
+  clearTimeout(saveTimer);
+  for (let k = 0; k < 4 && folder && S.project && anyDirty() && !S.lock && S.access === 'granted'; k++) {
+    while (busy) await sleep(50);
+    await save({ auto: true });
+  }
+  while (busy) await sleep(50);
+  return !(folder && S.project && anyDirty());
 }
 
 async function pickFolder() {
@@ -401,14 +443,22 @@ async function pickFolder() {
   await connectFolder(f);
 }
 
+/** The folder of the open map can be used again: catch up with the disk, save what waits. */
+function accessBack() {
+  S.access = 'granted';
+  $('#banner').hidden = true;
+  renderSaveState();
+  poll();
+  save({ auto: true });
+}
+
 /** A map opened through the MCP server (ME.RemoteFolder): when the server is connected again, use it again. */
 async function reopenRemote() {
   if (!(folder instanceof ME.RemoteFolder) || (S.project && S.access === 'granted')) return;
   const p = await folder.permission();
   if (p === 'denied') { if (!S.project) showBanner('remote-denied'); return; }
   if (p !== 'granted') return;
-  if (S.project) { S.access = 'granted'; $('#banner').hidden = true; renderSaveState(); poll(); save({ auto: true }); return; }
-  await connectFolder(folder);
+  if (S.project) accessBack(); else await connectFolder(folder);
 }
 
 /** The stored folder needs the user's permission again (after a browser restart): one click. */
@@ -419,20 +469,12 @@ async function reconnect() {
   }
   if (!folder) return pickFolder();
   if ((await folder.permission(true)) !== 'granted') { toast('No access to the folder'); return; }
-  if (S.project) { S.access = 'granted'; $('#banner').hidden = true; renderSaveState(); poll(); save({ auto: true }); return; }
-  await connectFolder(folder);
+  if (S.project) accessBack(); else await connectFolder(folder);
 }
 
-/** A new project in the open folder (it has no metadata.json): the map render as the first layer if it is there. */
+/** A new map in the open folder (it has no metadata.json): the basic layers, as New map makes. */
 async function newMapHere() {
-  const layers = [];
-  if (await folder.exists('background.webp')) {
-    layers.push({ id: 'background', name: 'Map from above (render)', group: 'Reference', type: 'image', file: 'background.webp',
-      visible: true, opacity: 1, locked: true });
-  }
-  const project = { title: 'New map', created: `Started in GameWorld Painter on ${today()}`, world: EMPTY_WORLD };
-  await folder.write('metadata.json', metadataText(project, layers.map(m => makeLayer(m, projOf(EMPTY_WORLD, 'm')))));
-  await connectFolder(folder);
+  try { await createMapIn(folder, EMPTY_WORLD, folder.name, 'basic', 'm'); } catch (err) { toast(err.message, 6000); }
 }
 
 function showBanner(kind, detail) {
@@ -453,8 +495,8 @@ function showBanner(kind, detail) {
       buttons(el('button', { class: 'primary', onclick: reconnect }, 'Allow'), el('button', { onclick: pickFolder }, 'Another folder…')));
   } else if (kind === 'nometa') {
     b.append(el('div', {}, el('code', {}, folder.name + '/'), ' has no metadata.json: it is not a project. Pick another folder, ' +
-      'or start an empty map in this one.'),
-    buttons(el('button', { class: 'primary', onclick: pickFolder }, 'Another folder…'), el('button', { onclick: newMapHere }, 'New empty map here')));
+      'or start a new map in this one (256 × 256 m with the basic layers; Map size changes it).'),
+    buttons(el('button', { class: 'primary', onclick: pickFolder }, 'Another folder…'), el('button', { onclick: newMapHere }, 'New map here')));
   } else if (kind === 'agent-open') {
     b.append(el('h3', {}, 'Opening a map for the AI agent'),
       el('div', {}, 'The AI agent asked to open ', el('code', {}, detail), '. It opens here as soon as this page is connected to the agent\'s MCP server (Chrome may ask to let the page reach apps on this device: allow it).'),
@@ -511,22 +553,24 @@ async function save({ auto = false } = {}) {
       const v = l.version;
       const data = await l.fileData();
       if (l.version !== v) continue; // edited while encoding: the next save writes it
+      const written = l.snapshot(); // what goes to the disk (edits made while it is written are not)
       await folder.write(l.file, data);
       if (!l.meta.file) { l.meta.file = l.file; S.metaVersion++; }
-      l.base = l.snapshot();
+      l.base = written;
       l.savedVersion = v;
       failed.delete(l.file);
       n++;
     }
     if (metaDirty() && !ME.agentReview?.holdsStructure()) {
-      const mv = S.metaVersion;
+      const mv = S.metaVersion, text = metadataText(); // what is written: later edits are saved next time
       const before = new Set([...S.metaBase.values()].map(m => m.file).filter(Boolean));
-      await folder.write('metadata.json', metadataText());
+      const base = metaBaseOf(S.layers.map(l => ({ ...l.meta, file: l.file }))), used = new Set(S.layers.map(l => l.file));
+      const projectBase = { world: structuredClone(S.project.world), unit: S.project.unit };
+      await folder.write('metadata.json', text);
       S.metaSaved = mv;
-      S.metaBase = metaBaseOf(S.layers.map(l => ({ ...l.meta, file: l.file })));
-      // files of deleted layers (and old files of replaced pictures)
-      const used = new Set(S.layers.map(l => l.file));
-      for (const f of before) if (!used.has(f)) await folder.remove(f);
+      S.metaBase = base;
+      S.projectBase = projectBase;
+      for (const f of before) if (!used.has(f)) await folder.remove(f); // files of deleted layers (and of replaced pictures)
       n++;
     }
     S.savedAt = new Date();
@@ -538,7 +582,7 @@ async function save({ auto = false } = {}) {
   } finally {
     busy = false;
     renderSaveState();
-    if (saveAgain) { saveAgain = false; if (anyDirty()) scheduleSave(); }
+    if (saveAgain) { saveAgain = false; save({ auto: true }); } // asked for while this one ran
   }
 }
 
@@ -570,9 +614,9 @@ function takeDiskContent(l, content) {
 
 /** metadata.json changed on the disk: merge the layer list (3-way, by id) and the settings (local changes win). */
 async function takeDiskMetadata(disk) {
-  const dw = disk.world && ME.normWorld(disk.world), w = S.project.world;
-  if (!dw || ['x0', 'z0', 'width', 'height', 'cols', 'rows'].some(k => dw[k] !== w[k]) || (disk.unit || 'm') !== S.project.unit) {
-    toast('The map size or unit changed in metadata.json: the project is opened again', 4000);
+  const dw = disk.world && ME.normWorld(disk.world), was = S.projectBase;
+  if (!dw || !sameWorld(dw, was.world) || (disk.unit || 'm') !== was.unit) { // changed there (a size or unit changed here is kept)
+    toast(`The map size or unit changed in metadata.json: the map is opened again${anyDirty() ? ' (your unsaved changes are lost)' : ''}`, 5000);
     await openProject(disk);
     return;
   }
@@ -603,13 +647,17 @@ async function takeDiskMetadata(disk) {
     }
     if (l && !d) {
       if (b && !l.dirty) { structure = true; return null; } // deleted there
+      if (b) markMeta(); // deleted there but changed here: kept, and listed in metadata.json again
       return l;
     }
     return null;
   };
-  // order: the disk's, unless the layer list was changed here; layers only on one side keep their neighbors
-  const primary = metaDirty() ? S.layers.map(l => l.id) : disk.layers.map(m => m.id);
-  const secondary = metaDirty() ? disk.layers.map(m => m.id) : S.layers.map(l => l.id);
+  // order: the disk's, unless the layer list was changed here (other settings do not count); layers only on one side
+  // keep their neighbors
+  const baseIds = [...base.keys()], localIds = S.layers.map(l => l.id);
+  const listChangedHere = baseIds.length !== localIds.length || localIds.some((id, k) => id !== baseIds[k]);
+  const primary = listChangedHere ? localIds : disk.layers.map(m => m.id);
+  const secondary = listChangedHere ? disk.layers.map(m => m.id) : localIds;
   const order = [...primary];
   secondary.forEach((id, k) => {
     if (order.includes(id)) return;
@@ -679,7 +727,7 @@ async function syncFromDisk() {
 }
 
 async function poll() {
-  if (!folder || !S.project || busy || S.access !== 'granted') return;
+  if (!folder || !S.project || busy || S.access !== 'granted' || stroke || drag) return; // not mid-stroke or mid-drag
   busy = true;
   try {
     if ((await folder.permission()) !== 'granted') { S.access = 'prompt'; renderSaveState(); return; }
@@ -722,42 +770,44 @@ setInterval(poll, POLL_MS);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 window.addEventListener('focus', poll);
 
-// Visibility, opacity and locks are view settings: kept in this browser (project.js has the defaults, written on save).
-const VIEW_KEYS = ['visible', 'opacity', 'locked'];
+// Visibility, opacity and locks of the layers are view settings: kept per map in this browser (metadata.json has the
+// defaults). Before, they were kept per page: read once for a map that has none of its own.
+const readJson = key => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } };
 
 function saveLayerView() {
   if (!S.project) return;
   const v = {};
-  for (const l of S.layers) v[l.id] = Object.fromEntries(VIEW_KEYS.map(k => [k, l.meta[k]]));
-  localStorage.setItem('gwp-layers|' + location.pathname, JSON.stringify(v));
+  for (const l of S.layers) v[l.id] = Object.fromEntries(META_LOCAL.map(k => [k, l.meta[k]]));
+  localStorage.setItem('gwp-layers|' + mapKey(), JSON.stringify(v));
 }
 
 function restoreLayerView() {
-  let v = {};
-  try { v = JSON.parse(localStorage.getItem('gwp-layers|' + location.pathname) || '{}'); } catch (e) { /* ignore */ }
-  for (const l of S.layers) if (v[l.id]) for (const k of VIEW_KEYS) if (k in v[l.id]) l.meta[k] = v[l.id][k];
+  const v = readJson('gwp-layers|' + mapKey()) || readJson('gwp-layers|' + location.pathname) || {};
+  for (const l of S.layers) if (v[l.id]) for (const k of META_LOCAL) if (k in v[l.id]) l.meta[k] = v[l.id][k];
 }
 
 function viewChanged() { saveLayerView(); renderLayers(); requestRender(); }
 
+/** The tool, the brush and the grid are kept for the page; the view, the folded groups and the selected layer per map. */
 function saveUi() {
   if (!view) return;
-  localStorage.setItem('gwp-ui|' + location.pathname, JSON.stringify({
-    view: { scale: view.scale, ox: view.ox, oy: view.oy }, tool: S.tool, brush: S.brush, grid: S.grid,
-    collapsed: [...S.collapsed], active: S.active?.id, addKind: S.addKind,
-  }));
+  localStorage.setItem('gwp-ui|' + location.pathname, JSON.stringify({ tool: S.tool, brush: S.brush, grid: S.grid, addKind: S.addKind }));
+  if (S.project) {
+    localStorage.setItem('gwp-map-ui|' + mapKey(), JSON.stringify({
+      view: { scale: view.scale, ox: view.ox, oy: view.oy }, world: S.project.world, collapsed: [...S.collapsed], active: S.active?.id,
+    }));
+  }
 }
 
 function restoreUi() {
-  let ui = {};
-  try { ui = JSON.parse(localStorage.getItem('gwp-ui|' + location.pathname) || '{}'); } catch (e) { /* ignore */ }
-  if (ui.view) Object.assign(view, ui.view); else view.fit();
+  const ui = readJson('gwp-ui|' + location.pathname) || {}, map = readJson('gwp-map-ui|' + mapKey()) || {};
+  if (map.view && map.world && sameWorld(map.world, S.project.world)) Object.assign(view, map.view); else view.fit(); // its size may have changed
   if (ui.brush) Object.assign(S.brush, ui.brush);
   if (ui.tool) S.tool = ui.tool;
   S.grid = !!ui.grid;
-  S.collapsed = new Set(ui.collapsed || []);
+  S.collapsed = new Set(map.collapsed || []);
   S.addKind = ui.addKind || '';
-  if (ui.active && layerById(ui.active)) setActive(layerById(ui.active), false);
+  if (map.active && layerById(map.active)) setActive(layerById(map.active), false);
 }
 
 // ------------------------------------------------------------------------------------------------ rendering
@@ -858,7 +908,7 @@ function drawScaleBar() {
 function rotateHandle(layer, it) {
   if (layer.meta.style === 'link' || layer.type === 'notes' || layer.type === 'vector') return null;
   const a = (it.yaw || 0) * Math.PI / 180;
-  const reach = layer.meta.style === 'footprint' ? Math.max(it.d || 1, it.w || 1) / 2 * view.scale : layer.markerRadius(view);
+  const k = mapUnit().k, reach = layer.meta.style === 'footprint' ? Math.max(it.d || k, it.w || k) / 2 * view.scale : layer.markerRadius(view);
   const [x, y] = view.toScreen(it.x, it.z);
   return [x - Math.sin(a) * (reach + 22), y - Math.cos(a) * (reach + 22), x, y];
 }
@@ -1189,9 +1239,10 @@ function addObject(layer, x, z) {
   select(layer, [it.id]);
 }
 
+// The selected items change only on a layer the user may edit: visible, not locked, not held by an AI proposal.
 function deleteSelected() {
   const L = S.sel.layer, n = S.sel.ids.size;
-  if (!L || !n) return;
+  if (!L || !n || !canEdit(L)) return;
   if (S.vtx != null && n === 1 && L.type === 'vector') { deletePoint(L, selectedItems()[0], S.vtx); return; }
   editObjects(L, `delete ${n} object(s)`, () => { L.items = L.items.filter(i => !S.sel.ids.has(i.id)); });
   select(L, []);
@@ -1199,7 +1250,7 @@ function deleteSelected() {
 
 function duplicateSelected() {
   const L = S.sel.layer;
-  if (!L || !S.sel.ids.size) return;
+  if (!L || !S.sel.ids.size || !canEdit(L)) return;
   const ids = [];
   editObjects(L, 'duplicate', () => {
     let next = L.nextId();
@@ -1216,7 +1267,7 @@ function duplicateSelected() {
 
 function moveSelected(dx, dz, label = 'move') {
   const L = S.sel.layer;
-  if (!L || !S.sel.ids.size) return;
+  if (!L || !S.sel.ids.size || !canEdit(L)) return;
   editObjects(L, label, () => {
     for (const it of selectedItems()) shiftItem(it, dx, dz);
   });
@@ -1224,7 +1275,7 @@ function moveSelected(dx, dz, label = 'move') {
 
 function rotateSelected(deg) {
   const L = S.sel.layer;
-  if (!L || !S.sel.ids.size || L.type === 'notes') return;
+  if (!L || !S.sel.ids.size || L.type === 'notes' || !canEdit(L)) return;
   editObjects(L, 'rotate', () => {
     for (const it of selectedItems()) {
       if (!it.points) { it.yaw = +(((it.yaw || 0) + deg + 540) % 360 - 180).toFixed(1); continue; }
@@ -1245,7 +1296,7 @@ const AREA_MODES = { rect: 'Rectangle', ellipse: 'Ellipse', free: 'Lasso', polyg
 const CLICK_SHAPES = ['polygon', 'line']; // drawn point by point
 
 const cellToWorld = (cx, cy) => [world().x0 + cx * mpp(), world().z0 + cy * mpp()];
-const m2 = cells => `${fmt(+(cells * mpp() * mpp()).toPrecision(6)).replace(/\.\d+$/, '')} ${ul()}²`;
+const m2 = cells => { const a = cells * mpp() * mpp(); return `${fmt(a >= 10 ? Math.round(a) : +a.toPrecision(2))} ${ul()}²`; };
 
 /** Paint a coverage (ME.shapeCoverage) into a raster layer with the brush settings, inside the selected area.
  *  full: the whole value (fill), else the strength of the brush. */
@@ -1319,14 +1370,7 @@ function shapeTest(type, pts) {
     const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, rx = (x1 - x0) / 2 || 1e-9, rz = (z1 - z0) / 2 || 1e-9;
     return (x, z) => ((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2 <= 1;
   }
-  return (x, z) => { // even-odd rule
-    let inside = false;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const [xi, zi] = pts[i], [xj, zj] = pts[j];
-      if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
-    }
-    return inside;
-  };
+  return (x, z) => ME.insidePoly(x, z, pts);
 }
 
 /** An object or a note by its position; a path when a part of it is inside. */
@@ -1637,7 +1681,7 @@ function pasteItems() {
   const C = S.clip, L = S.active;
   if (!L?.hasItems || L.type !== C.type) { toast(`Select ${C.type === 'notes' ? 'a notes' : C.type === 'vector' ? 'a vector' : 'an objects'} layer to paste into`); return; }
   if (!canEdit(L)) return;
-  let dx = 2, dz = 2; // next to the copied ones, or at the cursor
+  let dx = niceUnit(2), dz = niceUnit(2); // next to the copied ones (2 m, or as much in the unit of the map), or at the cursor
   if (S.screen && S.cursor) {
     dx = S.cursor[0] - C.items.reduce((s, i) => s + itemCenter(i)[0], 0) / C.items.length;
     dz = S.cursor[1] - C.items.reduce((s, i) => s + itemCenter(i)[1], 0) / C.items.length;
@@ -1861,7 +1905,7 @@ function drawArea() {
 
 const NOTE_COLORS = ['#ffd25a', '#ff9eb0', '#8fd0ff', '#a6e39a', '#d4b3ff', '#ffffff'];
 
-function today() { return new Date().toISOString().slice(0, 10); }
+function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 
 /** The notes layer under the world point, top first. */
 function pickNote(x, z) {
@@ -1947,7 +1991,7 @@ function closeNoteEditor(keep) {
   ed.hidden = true;
   if (document.activeElement === ta) ta.blur();
   requestRender();
-  if (!keep || !S.layers.includes(L)) return;
+  if (!keep || !S.layers.includes(L) || !canEdit(L)) return;
   const it = ne.id != null ? L.items.find(i => i.id === ne.id) : null;
   const setColor = o => { if (ne.color && ne.color !== L.meta.color) o.color = ne.color; else delete o.color; };
   if (!it) {
@@ -1967,7 +2011,7 @@ function closeNoteEditor(keep) {
 
 function renderNoteProps(box, L, items) {
   box.append(el('div', { class: 'section-head' }, items.length === 1 ? 'Note' : `${items.length} notes`, el('span', { class: 'muted' }, `· ${L.meta.name}`)));
-  const edit = (label, fn) => editObjects(L, label, () => { for (const it of selectedItems()) fn(it); });
+  const edit = (label, fn) => { if (canEdit(L)) editObjects(L, label, () => { for (const it of selectedItems()) fn(it); }); else renderProps(); };
   if (items.length === 1) {
     const it = items[0];
     const text = el('textarea', { rows: 5, onchange: () => { const t = text.value.trim(); if (t) edit('edit note', o => { o.text = t; }); } });
@@ -2092,7 +2136,7 @@ canvas.addEventListener('pointerdown', e => {
   if (tool === 'select') {
     // handles of the single selected object first
     const SL = S.sel.layer;
-    if (SL && S.sel.ids.size === 1 && SL.meta.visible && !SL.meta.locked && selectedItems()[0]?.points) {
+    if (SL && S.sel.ids.size === 1 && canEdit(SL, true) && selectedItems()[0]?.points) {
       const it = selectedItems()[0], near = ([px, py]) => Math.hypot(sx - px, sy - py) <= 7;
       const k = it.points.findIndex(p => near(view.toScreen(p[0], p[1])));
       if (k >= 0) { // a point: select it (Alt+click: delete it) and drag it
@@ -2116,7 +2160,7 @@ canvas.addEventListener('pointerdown', e => {
         return;
       }
     }
-    if (SL && S.sel.ids.size === 1 && SL.meta.visible && !SL.meta.locked) {
+    if (SL && S.sel.ids.size === 1 && canEdit(SL, true)) {
       const it = selectedItems()[0];
       const h = it && rotateHandle(SL, it);
       if (h && Math.hypot(sx - h[0], sy - h[1]) <= 9) {
@@ -2140,7 +2184,7 @@ canvas.addEventListener('pointerdown', e => {
       if (e.shiftKey) { if (ids.has(hit.it.id)) ids.delete(hit.it.id); else ids.add(hit.it.id); }
       else if (!ids.has(hit.it.id)) { ids.clear(); ids.add(hit.it.id); }
       select(hit.layer, ids);
-      if (ids.has(hit.it.id)) {
+      if (ids.has(hit.it.id) && canEdit(hit.layer, true)) { // held by an AI proposal: selected, not moved
         drag = {
           mode: 'move', layer: hit.layer, start: [x, z], before: cloneItems(hit.layer.items),
           orig: new Map(selectedItems().map(i => [i.id, structuredClone(i)])),
@@ -2389,7 +2433,6 @@ window.addEventListener('beforeunload', e => {
   if (anyDirty()) { e.preventDefault(); e.returnValue = ''; }
 });
 
-window.addEventListener('resize', () => { if (view) { view.resize(); requestRender(); } });
 
 // ------------------------------------------------------------------------------------------------ tools & options UI
 
@@ -2696,7 +2739,7 @@ function classPicker(L) {
 let dragRow = null;
 
 // Small pictures of the layers in the list: redrawn when a layer changes (a moment after painting).
-const thumbs = new Map(); // layer -> {canvas, key}
+const thumbs = new WeakMap(); // layer -> {canvas, key}
 let thumbTimer = null;
 
 function thumbOf(L) {
@@ -2809,7 +2852,7 @@ function toggleVisible(L, solo) {
       S.solo = null;
     } else {
       S.solo = { layer: L, vis: new Map(S.layers.map(l => [l, l.meta.visible])) };
-      S.layers.forEach(l => { l.meta.visible = l === L || l.id === 'background'; });
+      S.layers.forEach(l => { l.meta.visible = l === L || l.type === 'image'; }); // reference pictures stay
     }
   } else {
     L.meta.visible = !L.meta.visible;
@@ -2820,9 +2863,9 @@ function toggleVisible(L, solo) {
 /** Show or hide every layer. Hiding keeps the render of the map unless all is set (Alt+click). */
 function setAllVisible(visible, all = false) {
   S.solo = null;
-  S.layers.forEach(l => { l.meta.visible = visible || (!all && l.id === 'background'); });
+  S.layers.forEach(l => { l.meta.visible = visible || (!all && l.type === 'image'); }); // reference pictures stay (Alt: not)
   viewChanged();
-  toast(visible ? 'All layers shown' : all ? 'All layers hidden' : 'All layers hidden except the map render', 1500);
+  toast(visible ? 'All layers shown' : all ? 'All layers hidden' : 'All layers hidden except the reference pictures', 1500);
 }
 
 function renameLayer(L, nameEl) {
@@ -3030,7 +3073,7 @@ async function openNewLayer() {
       layer.dirty = true;
     }
     insertLayer(layer, `new layer ${meta.name}`);
-    toast(`Layer “${meta.name}” created`);
+    if (S.layers.includes(layer)) toast(`Layer “${meta.name}” created`); // not while an AI proposal holds the layer list
   };
 }
 
@@ -3188,7 +3231,7 @@ function renderSelectionProps(box) {
       btn('Clear', () => clearArea(), can), btn('Invert', invertArea), btn('Deselect', deselectArea)));
     return;
   }
-  box.append(el('div', { class: 'hint' }, 'Nothing is selected. Select objects or notes with Move (V), or an area with the selection tools (L, W).'));
+  box.append(el('div', { class: 'hint' }, 'Nothing is selected. Select objects or notes with Select (V), or an area with the Select area tools (L, W).'));
 }
 
 /** The objects (or notes) of the selected layer, with a filter; a click selects one and shows it on the map. */
@@ -3201,7 +3244,7 @@ function renderObjectList(box) {
   const list = el('div', { class: 'obj-list' });
   box.append(list);
   const labelOf = it => (L.type === 'notes' ? (it.text || '').split('\n')[0] : L.type === 'vector' ? `${it.kind} · ${fmtLen(L.length(it), 0)}`
-    : it.kind + (it.props?.pack_size ? ` ×${it.props.pack_size}` : ''));
+    : ME.label(L.meta.label || '{kind}', it) || it.kind); // as labeled on the map
   function fill() {
     const f = S.objFilter.trim().toLowerCase();
     const items = L.items.filter(it => !f || JSON.stringify([it.kind, it.zone, it.text, it.props]).toLowerCase().includes(f));
@@ -3285,7 +3328,11 @@ function renderLayerProps(box) {
     box.append(row('Smooth', sm, unit('curves through the points')));
     const dash = el('input', { type: 'checkbox', class: 'switch', checked: !!m.dash, onchange: () => setMeta(L, 'dash', dash.checked, 'dashed paths') });
     box.append(row('Dashed', dash, unit('borders')));
-    const [fR, fN] = slider(0, 100, 1, Math.round((m.fill ?? 0.25) * 100), v => { m.fill = v / 100; markMeta(); requestRender(); });
+    let fill = m.fill ?? 0.25; // previewed while dragged; one undo step when let go
+    const [fR, fN] = slider(0, 100, 1, Math.round(fill * 100), v => { m.fill = v / 100; requestRender(); });
+    const commitFill = () => { const v = m.fill; if (v === fill) return; m.fill = fill; setMeta(L, 'fill', v, 'area fill'); fill = m.fill; requestRender(); };
+    fR.addEventListener('change', commitFill);
+    fN.addEventListener('change', commitFill);
     box.append(row('Area fill', fR, fN, unit('% (closed paths)')));
     const lab = el('input', { value: m.label || '', placeholder: '{kind}', onchange: () => setMeta(L, 'label', lab.value, 'label') });
     box.append(row('Label', lab));
@@ -3401,7 +3448,7 @@ async function deleteClass(L, k) {
 function renderObjectProps(box, L, items) {
   const head = el('div', { class: 'section-head' }, items.length === 1 ? 'Object' : `${items.length} objects`, el('span', { class: 'muted' }, `· ${L.meta.name}`));
   box.append(head);
-  const edit = (label, fn) => editObjects(L, label, () => { for (const it of selectedItems()) fn(it); });
+  const edit = (label, fn) => { if (canEdit(L)) editObjects(L, label, () => { for (const it of selectedItems()) fn(it); }); else renderProps(); };
   const kind = el('input', { value: items.every(i => i.kind === items[0].kind) ? items[0].kind : '', list: 'kinds', placeholder: '(mixed)',
     onchange: () => { if (kind.value.trim()) edit('kind', it => { it.kind = kind.value.trim(); }); renderLayers(); } });
   const dl = $('#kinds');
@@ -3443,7 +3490,7 @@ function renderObjectProps(box, L, items) {
 /** The selected paths: kind, width, closed, smooth, the selected point, properties; Paint into a layer. */
 function renderPathProps(box, L, items) {
   box.append(el('div', { class: 'section-head' }, items.length === 1 ? 'Path' : `${items.length} paths`, el('span', { class: 'muted' }, `· ${L.meta.name}`)));
-  const edit = (label, fn) => { editObjects(L, label, () => { for (const it of selectedItems()) fn(it); }); renderProps(); requestRender(); };
+  const edit = (label, fn) => { if (canEdit(L)) editObjects(L, label, () => { for (const it of selectedItems()) fn(it); }); renderProps(); requestRender(); };
   const kind = el('input', { value: items.every(i => i.kind === items[0].kind) ? items[0].kind : '', list: 'kinds', placeholder: '(mixed)',
     onchange: () => { if (kind.value.trim()) edit('kind', it => { it.kind = kind.value.trim(); }); renderLayers(); } });
   const dl = $('#kinds');
@@ -3835,7 +3882,7 @@ async function createMap(nw, title, layersMode, unitId = 'm') {
  *  files, then it is opened. */
 async function createMapIn(f, nw, title, layersMode, unitId = 'm') {
   if (await f.exists('metadata.json')) throw new Error(`${f.name}/ already has a map (metadata.json): choose an empty folder — the folder dialog can make a new one`);
-  if (folder && S.project && anyDirty()) await save(); // the open map keeps its changes
+  if (!(await settleSave()) && !await ask('The open map has changes that could not be saved: they are lost.', { title: 'Make the new map?', ok: 'Make it', danger: true })) return;
   const proj = projOf(nw, unitId);
   let metas;
   if (layersMode === 'same' && S.project) {
@@ -4077,7 +4124,7 @@ const view3d = new ME.View3D($('#view3d'), {
   layers: () => S.layers,
   metaVersion: () => S.metaVersion,
   cursor: () => (S.screen && S.cursor ? S.cursor : null),
-  viewCenter: () => { const [x, z] = view.toWorld(view.w / 2, view.h / 2); return [x, z, view.w / view.scale]; },
+  viewCenter: () => view.toWorld(view.w / 2, view.h / 2),
 });
 {
   const p3 = $('#view3d'), exag = p3.querySelector('.v3-exag');
@@ -4098,6 +4145,7 @@ const view3d = new ME.View3D($('#view3d'), {
 const dock = new ME.Dock($('#dock'), {
   storageKey: 'gwp-dock3|' + location.pathname,
   onRemove: id => { if (id === 'view3d') view3d.close(); },
+  onReset: () => { if (dock.isOpen('view3d')) view3d.open(); },
 });
 function show3d() { dock.show('view3d'); view3d.open(); }
 function hide3d() { view3d.close(); dock.close('view3d'); }
@@ -4114,12 +4162,12 @@ noteEd.querySelector('textarea').addEventListener('keydown', e => {
 });
 
 // What the AI agent (js/agent-tools.js, js/agent.js) works with: the state and the edits with undo.
+ME.el = el; // also for js/agent-review.js and js/agent-ui.js
 ME.app = {
-  S, history, get view() { return view; }, get folder() { return folder; }, get saving() { return busy; },
-  world, mpp, toCell, layerById, canEdit, editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
-  renderAll, renderLayers, renderProps, renderOptions, requestRender, renderSaveState, markMeta, viewChanged,
-  insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, mapUnit, fmt, fmtLen,
-  itemCenter, selectedItems, saveUi, eventPos, metaDirty, scheduleSave, anyDirty, save, connectFolder, createMapIn, reopenRemote, afterHistory: () => { pruneSelection(); renderAll(); },
+  S, history, get view() { return view; }, get folder() { return folder; },
+  editObjects, pushUndo, pushRasterUndoSub, copyRect, undo,
+  renderLayers, renderProps, requestRender, renderSaveState, markMeta, viewChanged,
+  insertLayer, newLayerMeta, setLayerGroup, select, setActive, setArea, zoneAt, toast, ask, fmt, itemCenter, saveUi, metaDirty, scheduleSave, anyDirty, settleSave, mapKey, connectFolder, createMapIn, reopenRemote, afterHistory: () => { pruneSelection(); renderAll(); },
 };
 
 window.gwp = { // for the console and tests

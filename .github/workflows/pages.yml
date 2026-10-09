@@ -23,7 +23,9 @@ jobs:
         with:
           node-version: 24
       - name: Syntax
-        run: for f in js/*.js vendor/*.js tests/*.mjs mcp/*.mjs mcp/lib/*.mjs mcp/test/*.mjs; do node --check "$f"; done
+        run: for f in js/*.js vendor/*.js tests/*.mjs mcp/*.mjs mcp/lib/*.mjs mcp/scripts/*.mjs mcp/test/*.mjs; do node --check "$f"; done
+      - name: Lint
+        run: npm install --no-save --no-package-lock --no-audit --no-fund eslint@9 globals && npx eslint .
       - name: MCP server
         run: node --test mcp/test/*.test.mjs
       - name: Smoke test in headless Chrome

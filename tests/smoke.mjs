@@ -312,6 +312,40 @@ try {
   check(roadsIn === 'Greenery' && [afterMove, afterUndo, afterRedo].every(contiguous) && (await ev(`gwp.layerById('roads').meta.group`)) === 'Greenery',
     'changing a layer\'s group (with undo, redo) keeps groups together', `${afterMove.join(', ')} | ${afterUndo.join(', ')}`);
 
+  // undo of a layer delete after it was saved: the layer comes back with its file
+  const exists = p => ev(`(async () => { try { const parts = ${JSON.stringify(p)}.split('/'); let d = await navigator.storage.getDirectory();
+    for (const q of parts.slice(0, -1)) d = await d.getDirectoryHandle(q); await d.getFileHandle(parts.at(-1)); return true; } catch { return false; } })()`);
+  await until(`!gwp.busy && !gwp.S.layers.some(l => l.dirty)`, 8000);
+  await ev(`gwp.setActive(gwp.layerById('bushes')); document.getElementById('layer-del').click(); true`);
+  await until(`document.getElementById('confirm-dlg').open`, 3000);
+  await ev(`document.querySelector('#confirm-dlg .ok').click(); true`);
+  const removed = await until(async () => !(await exists('demo/layers/bushes.png')), 8000);
+  await ev(`gwp.undo(); true`);
+  const restored = await until(async () => (await exists('demo/layers/bushes.png')) && (await ev(`!gwp.S.layers.some(l => l.dirty) && !!gwp.layerById('bushes')`)), 8000);
+  check(removed && restored, 'undo of a saved layer delete writes the layer file again', JSON.stringify({ removed, restored }));
+
+  // the objects of a locked layer are not deleted, moved or turned with the keys
+  const lockedN = await ev(`(() => { const L = gwp.layerById('chests'); L.meta.locked = true; gwp.setActive(L); gwp.setTool('select');
+    ME.app.select(L, L.items.map(i => i.id)); return L.items.length; })()`);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 });
+  await sleep(200);
+  check((await ev(`gwp.layerById('chests').items.length`)) === lockedN && lockedN > 0, 'Delete does not remove the objects of a locked layer');
+  await ev(`gwp.layerById('chests').meta.locked = false; ME.app.select(null, []); true`);
+
+  // Reset the layout: the 3D preview is in it again, and shows
+  await ev(`gwp.dock.reset(); true`);
+  check(await until(`gwp.dock.isOpen('view3d') && gwp.view3d.isOpen && !document.getElementById('view3d').hidden`, 3000), 'Reset the layout: the 3D preview shows');
+
+  // a folder without a map: the map open before is closed, nothing of it is written there
+  await until(`!gwp.busy && !gwp.S.layers.some(l => l.dirty)`, 8000);
+  await ev(`gwp.layerById('trees').dirty = true; true`); // an unsaved change of the map open before
+  await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('empty', { create: true }); await gwp.connect(d); })()`);
+  await sleep(1500);
+  const closed = await ev(`({ project: !!gwp.S.project, layers: gwp.S.layers.length, banner: document.getElementById('banner').textContent })`);
+  const written = await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('empty'); const n = []; for await (const k of d.keys()) n.push(k); return n; })()`);
+  check(!closed.project && closed.layers === 0 && /no metadata\.json/.test(closed.banner) && written.length === 0, 'a folder without a map closes the map open before; nothing is written there', JSON.stringify({ closed, written }));
+
   check(errors.length === 0, 'no errors in the page', errors.slice(0, 3).join(' | '));
 } catch (err) {
   check(false, 'the test ran', err.message);

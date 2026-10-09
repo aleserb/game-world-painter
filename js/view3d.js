@@ -10,10 +10,10 @@
 precision highp float;
 precision highp int;
 in vec2 a_grid;                    // mesh vertex (i, j)
-uniform highp sampler2D u_height;  // R32F, cols x rows: the height of every cell, m
+uniform highp sampler2D u_height;  // R32F, cols x rows: the height of every cell (in the unit of the map)
 uniform ivec2 u_cells;             // cols, rows
 uniform float u_step;              // cells per mesh step
-uniform vec4 u_world;              // x0, z0, width, height (m)
+uniform vec4 u_world;              // x0, z0, width, height
 uniform float u_exag;              // height scale
 uniform mat4 u_mvp;
 out vec2 v_uv;
@@ -176,9 +176,8 @@ void main() { o = u_color; }`;
 
     // --- open / close
 
-    toggle() { if (this.isOpen) this.close(); else this.open(); }
-
     open() {
+      if (this.isOpen) { this.requestDraw(); return; }
       this.isOpen = true;
       this.panel.hidden = false;
       this.init();
@@ -449,8 +448,7 @@ void main() { o = u_color; }`;
       gl.uniform1f(T.u.u_step, this.mesh.step);
       gl.uniform4f(T.u.u_world, world.x0, world.z0, world.width, world.height);
       gl.uniform1f(T.u.u_exag, this.exag);
-      const L = [-0.5, 0.78, -0.38], ll = Math.hypot(...L);
-      gl.uniform3f(T.u.u_light, L[0] / ll, L[1] / ll, L[2] / ll);
+      gl.uniform3f(T.u.u_light, ...LIGHT);
       gl.uniform3f(T.u.u_eye, ...eye);
       gl.uniform1f(T.u.u_fog, c.dist * 1.6);
       gl.activeTexture(gl.TEXTURE0);

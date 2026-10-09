@@ -1,7 +1,7 @@
 // The MCP server without the app: protocol (legacy and modern), the bridge to a fake app, origins, relays, HTTP.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startStdio, initialize, freePort, fakeApp, req, sleep, makeProject, listening } from './helpers.mjs';
+import { startStdio, initialize, freePort, fakeApp, req, makeProject, listening } from './helpers.mjs';
 import { TOOLS } from '../lib/tools.mjs';
 
 const META = v => ({ 'io.modelcontextprotocol/protocolVersion': v, 'io.modelcontextprotocol/clientInfo': { name: 'modern-client', version: '2.0' }, 'io.modelcontextprotocol/clientCapabilities': {} });
@@ -89,6 +89,13 @@ test('tool calls run in the app; images and errors come back', async () => {
     assert.equal(st.app.title, 'Test');
     assert.ok(st.agents.some(a => a.name === 'test-agent'));
     app.close();
+    // an app of another API version: the agent is told which side to update
+    const newer = fakeApp(port, () => ({ data: {} }), 'http://localhost:8000', 99);
+    await newer.ready;
+    const mismatch = await c.request('tools/call', { name: 'find_items', arguments: {} });
+    assert.equal(mismatch.result.isError, true);
+    assert.match(mismatch.result.content[0].text, /newer \(API 99\).*Update the server/);
+    newer.close();
   } finally { await c.kill(); }
 });
 

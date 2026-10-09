@@ -77,7 +77,6 @@ try {
   check(walk.data?.walkable_pct > 20 && walk.data.blocking_layers.includes('water') && walk.data.main_part, 'analyze_walkability', walk.error || JSON.stringify(walk.data?.main_part));
 
   // changing (each one undo step)
-  const undo0 = await ev('gwp.history.undo.length');
   const route = await call('find_route', { from: { zone: 'village' }, to: { item: { layer: 'buildings', id: 9 } }, prefer: ['roads'], avoid: [{ layer: 'enemies', distance: 15 }], add_to: { layer: 'trails', kind: 'route' } });
   check(route.data?.found && route.data.points.length >= 2 && route.data.added_to?.layer === 'trails', 'find_route, added as a path', route.error || JSON.stringify(route.data));
   const before = await ev(`gwp.layerById('enemies').items.length`);

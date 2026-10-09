@@ -25,10 +25,12 @@
   }
 
   class Dock {
-    /** container: the element of the dock; storageKey: localStorage key of the layout; onRemove(id): a panel closed. */
-    constructor(container, { storageKey, onRemove }) {
+    /** container: the element of the dock; storageKey: localStorage key of the layout; onRemove(id): a panel closed;
+     *  onReset(): the layout was reset (the panels of the first start are there again). */
+    constructor(container, { storageKey, onRemove, onReset }) {
       this.key = storageKey;
       this.onRemove = onRemove;
+      this.onReset = onReset;
       this.nodes = {};
       for (const [id, p] of Object.entries(PANELS)) this.nodes[id] = document.querySelector(p.node);
       this.api = DV.createDockview(container, {
@@ -97,13 +99,12 @@
       }
     }
 
-    /** Back to the starting layout (the optional panels close). */
+    /** Back to the layout of the first start (with the 3D preview). */
     reset() {
-      const open = Object.keys(PANELS).filter(id => !PANELS[id].fixed && this.isOpen(id));
       this.api.clear(); // onRemove() closes the optional panels
       localStorage.removeItem(this.key);
       this.defaults();
-      return open;
+      this.onReset?.();
     }
 
     isOpen(id) { return !!this.api.getPanel(id); }
@@ -134,5 +135,4 @@
   }
 
   ME.Dock = Dock;
-  ME.DOCK_PANELS = PANELS;
 })(window.ME = window.ME || {});

@@ -67,7 +67,7 @@
       <button id="layer-down" class="ibtn" data-icon="arrow-down" title="Move the selected layers down inside their group (a selected group: past the group below)"></button>
       <span class="spacer"></span>
       <button id="layers-show" class="ibtn" data-icon="eye" title="Show all layers"></button>
-      <button id="layers-hide" class="ibtn" data-icon="eye-off" title="Hide all layers except the map render (Alt+click: hide it too)"></button>
+      <button id="layers-hide" class="ibtn" data-icon="eye-off" title="Hide all layers except the reference pictures (Alt+click: hide them too)"></button>
     </div>
     <div id="layer-list"></div>
   </section>
@@ -139,7 +139,7 @@
     <h3>Map size</h3>
     <label class="for-new">Title <input name="title" value="New map" autocomplete="off"></label>
     <label title="The numbers of the map (coordinates, sizes, heights) are in this unit: take the one of your engine">Units <select name="unit"></select></label>
-    <label class="unit-change" hidden>Numbers
+    <label hidden>Numbers
       <select name="convert">
         <option value="convert">Convert: the map keeps its real size</option>
         <option value="rename">Keep: only the name of the unit changes</option>
@@ -160,7 +160,7 @@
     </label>
     <p class="info small"></p>
     <p class="muted small for-size">The map is a rectangle of square cells. Painted cells outside the new bounds are cut off, new cells are empty (height 0); objects, notes and pictures keep their place. Converting to another unit multiplies every coordinate, size and height. The layer files are written again. This cannot be undone.</p>
-    <p class="muted small for-new">The new map goes into an empty folder (the folder dialog can make one); the open map is saved first. Folder… opens either map later.</p>
+    <p class="muted small for-new">The new map goes into an empty folder (the folder dialog can make one); the open map is saved first. Open Folder opens either map later.</p>
     <div class="buttons">
       <button value="cancel" formnovalidate>Cancel</button>
       <button type="button" class="primary ok">Apply</button>
@@ -181,7 +181,7 @@
 <dialog id="help-dlg">
   <form method="dialog">
     <h3>GameWorld Painter</h3>
-    <p class="muted intro">Every layer shows one kind of thing on the map seen from above. Pick a tool in the bar at the top, select a layer in the Layers panel, then paint or place objects on it; the Tool Options panel has the settings of the tool, Properties those of the layer (tabs: Layer, Selection, Objects). Click the eye to hide a layer, Alt+click to show only it (Alt+click again to bring the others back). The eye buttons above the list show / hide every layer (hiding keeps the map render; Alt+click hides it too). Visibility, opacity and locks are kept in this browser. The project is a folder (<code>metadata.json</code> and one file per layer): with Autosave on, every change is written there a moment later. The tool checks the folder every second and loads what other programs changed (merged with your unsaved changes); while <code>edit.lock</code> is in the folder it does not write.</p>
+    <p class="muted intro">Every layer shows one kind of thing on the map seen from above. Pick a tool in the bar at the top, select a layer in the Layers panel, then paint or place objects on it; the Tool Options panel has the settings of the tool, Properties those of the layer (tabs: Layer, Selection, Objects). Click the eye to hide a layer, Alt+click to show only it (Alt+click again to bring the others back). The eye buttons above the list show / hide every layer (hiding keeps the reference pictures; Alt+click hides them too). Visibility, opacity and locks are kept in this browser. The project is a folder (<code>metadata.json</code> and one file per layer): with Autosave on, every change is written there a moment later. The tool checks the folder every second and loads what other programs changed (merged with your unsaved changes); while <code>edit.lock</code> is in the folder it does not write.</p>
     <div class="help-cols">
       <table class="keys">
         <tr><th>Space + drag, middle or right drag, H</th><td>Pan</td></tr>
@@ -213,7 +213,6 @@
         <tr><th>Layers: ↑ ↓ · Shift+↑ ↓</th><td>After a click in the Layers panel: select the layer above / below · extend the selection</td></tr>
         <tr><th>Layers: ▲▼ · group header</th><td>Move the selected layers inside their group · click a group header to select the group (▲▼ move it; the arrow or a double-click folds it)</td></tr>
         <tr><th>Ctrl+Enter · Esc</th><td>In a note: save · cancel</td></tr>
-        <tr><th>Ctrl+A · Esc</th><td>Select all objects of the layer · clear the selection</td></tr>
         <tr><th>Ctrl+Z · Ctrl+Shift+Z</th><td>Undo · redo</td></tr>
         <tr><th>Ctrl+S · Ctrl+O</th><td>Save now · open another project folder</td></tr>
         <tr><th>Panels</th><td>Drag a tab to dock the panel at another side or into another group · Shift+drag a tab to float it · drag the borders to resize · right-click a tab: maximize, float, reset the layout</td></tr>

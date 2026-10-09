@@ -5,17 +5,7 @@
 
 const agent = ME.agent, S = agent.settings;
 const $ = s => document.querySelector(s);
-const el = (tag, attrs = {}, ...kids) => {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') e.className = v;
-    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
-    else if (k in e && typeof v !== 'string') e[k] = v;
-    else e.setAttribute(k, v);
-  }
-  for (const c of kids.flat()) if (c != null) e.append(c);
-  return e;
-};
+const el = (...a) => ME.el(...a);
 
 const STATES = {
   off: ['off', 'AI Agent is off', 'Turn it on to let an AI agent work on this map through the local MCP server.'],

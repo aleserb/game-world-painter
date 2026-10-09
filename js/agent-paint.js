@@ -5,9 +5,9 @@
 
 const T = ME.agentTools = ME.agentTools || {};
 const { G, fail, region, regionMask, presence, distanceField, blur, noiseFn, rng, worldBox, cellOf, cellX, cellZ, layerOf, editable,
-  heightLayer, zonesLayer, classIndex, metersIn, fmtU, r2, num, pt, A, any } = ME.agentInternals;
+  heightLayer, classIndex, metersIn, fmtU, r2, num, pt, A, any } = ME.agentInternals;
 const { each, pct } = ME.agentRead;
-const { writable, flash, cleanItems } = ME.agentWrite;
+const { writable, flash } = ME.agentWrite;
 const center = it => A().itemCenter(it);
 
 /** The weight (0..1) of every cell of a window around a region: 1 inside, a soft edge of `feather` units. */
@@ -92,7 +92,7 @@ T.paint_layer = (args, ctx) => {
 function placeOf(g, spec, name) {
   if (!spec || typeof spec !== 'object') fail(`${name} is {"point":[x,z]} or a region, with an optional "height"`);
   if (spec.point) { const [x, z] = pt(spec.point, name); return { x, z, m: regionMask({ circle: [x, z, g.c * 2] }, g) }; }
-  const { height, ...reg } = spec, r = region(reg, g);
+  const { height: _height, ...reg } = spec, r = region(reg, g); // its height is read by the caller
   let sx = 0, sz = 0;
   each(g, r.b, r.m, (i, x, y) => { sx += cellX(g, x); sz += cellZ(g, y); });
   return { x: sx / r.b.count, z: sz / r.b.count, m: r.m, b: r.b };

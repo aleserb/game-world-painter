@@ -380,9 +380,6 @@ T.end_change = (args, ctx) => {
   return { deferred: R.decision(P, args.wait ?? DEFAULT_WAIT).then(d => ({ data: { proposal: d, changes: P.changes.map(c => c.label), ...(checked ? { checks: checked } : {}) } })) };
 };
 
-T.begin_proposal = T.begin_change; // the names before 0.3
-T.submit_proposal = T.end_change;
-
 T.wait_for_review = args => {
   const P = args.id != null ? R.list.find(x => x.id === args.id) : (R.active?.review ? R.active : null) || R.list.find(x => x.review) || R.list[0];
   if (!P) fail(args.id != null ? `No proposal #${args.id}` : 'There is no proposal');
@@ -399,17 +396,7 @@ R.withdraw = () => {
 
 // ------------------------------------------------------------------------------------------------ the card over the map
 
-const el = (tag, attrs = {}, ...kids) => {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') e.className = v;
-    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
-    else if (k in e && typeof v !== 'string') e[k] = v;
-    else e.setAttribute(k, v);
-  }
-  for (const c of kids.flat()) if (c != null) e.append(c);
-  return e;
-};
+const el = (...a) => ME.el(...a);
 
 /** The agent's text: lines, "- " lists, **bold** and `code` (as text: no HTML). */
 function richText(text, cls) {

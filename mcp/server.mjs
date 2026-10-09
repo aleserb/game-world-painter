@@ -4,7 +4,6 @@
 import { readFileSync, existsSync, promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import readline from 'node:readline';
@@ -42,12 +41,11 @@ Options:
   -v, --version         -h, --help`;
 
 function parseArgs(argv) {
-  const o = { port: +process.env.GWP_MCP_PORT || DEFAULT_PORT, host: '127.0.0.1', origins: [], timeout: 120, mode: null, quiet: false, command: null,
+  const o = { port: +process.env.GWP_MCP_PORT || DEFAULT_PORT, origins: [], timeout: 120, mode: null, quiet: false, command: null,
     appUrl: process.env.GWP_APP_URL || 'https://aleserb.github.io/game-world-painter/', browser: process.env.GWP_OPEN_BROWSER !== '0' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], next = () => { if (i + 1 >= argv.length) fail(`${a} needs a value`); return argv[++i]; };
     if (a === '--port') o.port = +next();
-    else if (a === '--host') o.host = next();
     else if (a === '--allow-origin') o.origins.push(next());
     else if (a === '--timeout') o.timeout = +next();
     else if (a === '--app-url') o.appUrl = next();
@@ -61,7 +59,6 @@ function parseArgs(argv) {
     else fail(`Unknown option: ${a}\n\n${HELP}`);
   }
   if (!(o.port > 0 && o.port < 65536)) fail('--port must be a port number');
-  if (!['127.0.0.1', 'localhost', '::1'].includes(o.host)) process.stderr.write(`[gwp-mcp] warning: listening on ${o.host}, not only this computer\n`);
   return o;
 }
 
@@ -77,8 +74,8 @@ if (opts.command === 'setup') { printSetup(); process.exit(0); }
 const SKILL = [here('../skills/game-world-painter/SKILL.md'), here('./skill/SKILL.md')].find(existsSync);
 const FORMAT = [here('../docs/project-format.md'), here('./docs/project-format.md')].find(existsSync);
 const resources = [
-  SKILL && { uri: 'gwp://skill', name: 'game-world-painter-skill', title: 'How to work with GameWorld Painter', mimeType: 'text/markdown', read: () => readFile(SKILL, 'utf8') },
-  FORMAT && { uri: 'gwp://project-format', name: 'project-format', title: 'The project folder format', mimeType: 'text/markdown', read: () => readFile(FORMAT, 'utf8') },
+  SKILL && { uri: 'gwp://skill', name: 'game-world-painter-skill', title: 'How to work with GameWorld Painter', mimeType: 'text/markdown', read: () => fsp.readFile(SKILL, 'utf8') },
+  FORMAT && { uri: 'gwp://project-format', name: 'project-format', title: 'The project folder format', mimeType: 'text/markdown', read: () => fsp.readFile(FORMAT, 'utf8') },
 ].filter(Boolean);
 
 const mcpOptions = { serverInfo: { name: 'game-world-painter', title: 'GameWorld Painter', version: pkg.version }, instructions: INSTRUCTIONS, tools: TOOLS, resources };
@@ -86,7 +83,7 @@ const mcpOptions = { serverInfo: { name: 'game-world-painter', title: 'GameWorld
 // ------------------------------------------------------------------------------------------------ hub or relay
 
 const hubOptions = {
-  port: opts.port, host: opts.host, version: pkg.version, api: API_VERSION, log, slowTools: SLOW_TOOLS,
+  port: opts.port, version: pkg.version, api: API_VERSION, log, slowTools: SLOW_TOOLS,
   allowOrigins: [...DEFAULT_ORIGINS, ...opts.origins], timeoutMs: opts.timeout * 1000,
   waitAppMs: process.env.GWP_MCP_WAIT_APP_MS != null ? +process.env.GWP_MCP_WAIT_APP_MS : 4000, // a reloading page reconnects
   command: { node: process.execPath, script: SCRIPT, npm: FROM_NPM, npx: NPX.join(' ') },
@@ -269,11 +266,12 @@ async function projectPath(args, ctx) {
   };
 }
 
-function request(method, path, body, signal) {
+/** A request to the hub of this port (from a relay: another process's server). */
+function request(method, urlPath, body, signal) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const req = http.request({
-      host: '127.0.0.1', port: opts.port, path, method, signal,
+      host: '127.0.0.1', port: opts.port, path: urlPath, method, signal,
       headers: { 'Content-Type': 'application/json', 'X-GWP-Relay': '1', Host: `127.0.0.1:${opts.port}`, ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}) },
     }, res => {
       const chunks = [];
@@ -287,8 +285,8 @@ function request(method, path, body, signal) {
     req.end();
   });
 }
-const getJson = path => request('GET', path);
-const postJson = (path, body, signal) => request('POST', path, body, signal);
+const getJson = urlPath => request('GET', urlPath);
+const postJson = (urlPath, body, signal) => request('POST', urlPath, body, signal);
 
 // ------------------------------------------------------------------------------------------------ run
 

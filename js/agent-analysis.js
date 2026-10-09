@@ -4,8 +4,7 @@
 'use strict';
 
 const T = ME.agentTools = ME.agentTools || {};
-const { G, fail, region, regionMask, presence, itemsMask, distanceField, slopeField, blur, components, bounds, worldBox,
-  cellOf, cellX, cellZ, layerOf, itemLayers, heightLayer, coverLayers, blockingMask, metersIn, fmtU, r2, num, pt, A, any } = ME.agentInternals;
+const { G, fail, region, regionMask, presence, itemsMask, distanceField, slopeField, blur, components, cellOf, cellX, cellZ, layerOf, itemLayers, heightLayer, coverLayers, blockingMask, metersIn, fmtU, r2, pt, A, any } = ME.agentInternals;
 const { each, inRegion, pct } = ME.agentRead;
 const center = it => A().itemCenter(it);
 
@@ -20,24 +19,24 @@ function union(g, layers, opts = {}) {
 T.find_spots = args => {
   const g = G(), r = region(args.region, g), metric = args.metric;
   const radius = (args.radius ?? metersIn(g, 15)) / g.c, limit = Math.max(1, Math.min(50, args.limit || 10));
-  let f, used = [], higher = true, unit = g.unit.label, scale = g.c, thr = null;
+  let f, used = [], unit = '', thr = null; // unit: what the value of high / low means
   if (['open', 'enclosed', 'empty'].includes(metric)) {
     const cov = coverLayers(args.layers);
     used = cov.map(L => L.id);
     if (!cov.length && metric !== 'empty') fail('No cover layers found: name them in "layers" (e.g. ["trees","rocks","buildings"])');
     const src = union(g, cov);
     if (metric === 'empty') for (const L of itemLayers()) { if (L.type === 'notes') continue; const p = itemsMask(g, L); for (let i = 0; i < src.length; i++) src[i] |= p[i]; used.push(L.id); }
-    if (metric === 'enclosed') { f = blur(g, Float32Array.from(src), radius / 2); scale = 100; unit = '% cover around'; }
+    if (metric === 'enclosed') f = blur(g, Float32Array.from(src), radius / 2);
     else f = any(src) ? distanceField(g, src) : new Float32Array(g.N * g.R).fill(1e6);
   } else if (metric === 'high' || metric === 'low') {
     const H = heightLayer(null, true), mean = blur(g, H.data, radius / 2);
     f = new Float32Array(g.N * g.R);
     for (let i = 0; i < f.length; i++) f[i] = (H.data[i] - mean[i]) * (metric === 'high' ? 1 : -1);
-    used = [H.id]; scale = 1; unit = `${g.unit.label} above the surroundings`;
+    used = [H.id]; unit = `${g.unit.label} above the surroundings`;
     if (metric === 'low') unit = `${g.unit.label} below the surroundings`;
   } else if (metric === 'flat' || metric === 'steep') {
     const H = heightLayer(null, true), s = slopeField(g, H);
-    f = metric === 'flat' ? s.map(v => 90 - v) : s; used = [H.id]; scale = 1; unit = 'degrees';
+    f = metric === 'flat' ? s.map(v => 90 - v) : s; used = [H.id];
     if (metric === 'flat') thr = 90 - 8; // under 8°
   } else if (metric === 'far_from' || metric === 'near_to') {
     if (!args.layers?.length) fail(`${metric} needs "layers"`);
@@ -53,7 +52,7 @@ T.find_spots = args => {
   vals.sort((a, b) => a - b);
   thr ??= vals[Math.floor(vals.length * 0.85)];
   const cand = new Uint8Array(g.N * g.R);
-  each(g, r.b, r.m, i => { if (higher ? f[i] >= thr : f[i] <= thr) cand[i] = 1; });
+  each(g, r.b, r.m, i => { if (f[i] >= thr) cand[i] = 1; }); // every metric: higher is more of it
   const { lab, parts } = components(g, cand), minCells = Math.max(4, (args.min_area || 0) / (g.c * g.c));
   const best = new Map();
   each(g, r.b, cand, i => { const l = lab[i], b = best.get(l); if (b == null || f[i] > f[b]) best.set(l, i); });
@@ -291,7 +290,7 @@ class Heap {
 T.find_route = (args, ctx) => {
   const g = G(), r = route(g, args);
   if (!r.ok) return { data: { found: false, why: r.why } };
-  const { ok, ...data } = r;
+  const { ok: _ok, ...data } = r;
   if (args.add_to) {
     if (!ctx.canWrite) fail('The user lets the agent read only: the route was found but not added');
     const L = layerOf(args.add_to.layer, ['vector']);

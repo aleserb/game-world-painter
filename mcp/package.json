@@ -1,6 +1,6 @@
 {
   "name": "game-world-painter-mcp",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "MCP server for GameWorld Painter, the layered game world map editor: AI agents (Claude Code, Codex, GitHub Copilot, VS Code, Cursor, Gemini CLI) read, analyze and edit the map open in the app.",
   "mcpName": "io.github.aleserb/game-world-painter",
   "type": "module",

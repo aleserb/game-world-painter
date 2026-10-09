@@ -8,7 +8,8 @@
 //   POST /mcp          Streamable HTTP MCP for clients configured by URL
 //   /fs/stat, /fs/read, /fs/write, /fs/remove   the files of a map the agent opened or created (open_map, create_map),
 //                      for the connected app only (X-GWP-Session) and only inside the folders granted by the agent
-// Browsers may reach it only from allowed origins (the app); the Host header must be a loopback name (no DNS rebinding).
+// It listens on 127.0.0.1 only. Browsers may reach it only from allowed origins (the app); the Host header must be a
+// loopback name (no DNS rebinding).
 import http from 'node:http';
 import path from 'node:path';
 import { promises as fsp } from 'node:fs';
@@ -22,7 +23,7 @@ const MAX_BODY = 64 * 1024 * 1024;
 export class AppNotConnected extends Error {}
 
 export class Hub {
-  /** o: {port, host, allowOrigins, version, api, log, timeoutMs, slowTools, waitAppMs, sessionIdleMs, maxSessions, mcp: endpoint options} */
+  /** o: {port, allowOrigins, version, api, log, timeoutMs, slowTools, waitAppMs, sessionIdleMs, maxSessions, command, mcp: endpoint options} */
   constructor(o) {
     this.o = o;
     this.app = null; // {session, res, origin, since, title, api, version}
@@ -46,9 +47,9 @@ export class Hub {
         if (!res.headersSent) send(res, 500, { error: String(e.message || e) });
       }));
       this.server.on('error', reject);
-      this.server.listen(this.o.port, this.o.host, () => {
+      this.server.listen(this.o.port, '127.0.0.1', () => {
         this.server.off('error', reject);
-        this.prune = setInterval(() => this.pruneAgents(), 10000);
+        this.prune = setInterval(() => this.pruneIdle(), 10000);
         this.prune.unref();
         resolve();
       });
@@ -81,7 +82,7 @@ export class Hub {
   hostAllowed(host) {
     if (!host) return false;
     const h = host.replace(/:\d+$/, '').toLowerCase();
-    return ['127.0.0.1', 'localhost', '[::1]', String(this.o.host || '').toLowerCase()].includes(h);
+    return ['127.0.0.1', 'localhost', '[::1]'].includes(h);
   }
 
   cors(req, res) {
@@ -110,19 +111,19 @@ export class Hub {
       });
       return res.end();
     }
-    const path = url.pathname;
-    if (path === '/status' && req.method === 'GET') return send(res, 200, this.status());
-    if (path === '/app/events' && req.method === 'GET') return this.appEvents(req, res, url);
-    if (path === '/app/result' && req.method === 'POST') return this.appResult(req, res);
-    if (path === '/app/state' && req.method === 'POST') return this.appState(req, res);
-    if (path.startsWith('/relay/')) {
+    const at = url.pathname;
+    if (at === '/status' && req.method === 'GET') return send(res, 200, this.status());
+    if (at === '/app/events' && req.method === 'GET') return this.appEvents(req, res, url);
+    if (at === '/app/result' && req.method === 'POST') return this.appResult(req, res);
+    if (at === '/app/state' && req.method === 'POST') return this.appState(req, res);
+    if (at.startsWith('/relay/')) {
       if (origin || req.headers['x-gwp-relay'] !== '1') return send(res, 403, { error: 'Relay only' });
-      if (path === '/relay/hello' && req.method === 'POST') return this.relayHello(req, res);
-      if (path === '/relay/call' && req.method === 'POST') return this.relayCall(req, res);
+      if (at === '/relay/hello' && req.method === 'POST') return this.relayHello(req, res);
+      if (at === '/relay/call' && req.method === 'POST') return this.relayCall(req, res);
     }
-    if (path === '/mcp') return this.mcpHttp(req, res);
-    if (path.startsWith('/fs/')) return this.fs(req, res, url);
-    if (path === '/' && req.method === 'GET') {
+    if (at === '/mcp') return this.mcpHttp(req, res);
+    if (at.startsWith('/fs/')) return this.fs(req, res, url);
+    if (at === '/' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(`GameWorld Painter MCP server ${this.o.version}\nMCP endpoint: http://127.0.0.1:${this.o.port}/mcp\nApp: ${this.app ? 'connected' : 'not connected'}\n`);
     }
@@ -207,6 +208,11 @@ export class Hub {
         + `(https://aleserb.github.io/game-world-painter/ or a local copy), open their map, and turn on AI Agent in the header `
         + `(server http://127.0.0.1:${this.o.port}). Then try again.`);
     }
+    if (app.api && this.o.api && app.api !== this.o.api) { // the tools differ: say which side to update
+      throw Object.assign(new Error(app.api > this.o.api
+        ? `GameWorld Painter in the browser is newer (API ${app.api}) than this MCP server ${this.o.version} (API ${this.o.api}). Update the server: use npx -y game-world-painter-mcp@latest in the agent's MCP settings, then restart the agent.`
+        : `GameWorld Painter in the browser is older (API ${app.api}) than this MCP server ${this.o.version} (API ${this.o.api}). Ask the user to reload the page (Ctrl+Shift+R).`), { fromApp: true });
+    }
     const id = randomUUID();
     this.total++;
     return new Promise((resolve, reject) => {
@@ -243,12 +249,13 @@ export class Hub {
     this.pushStatus();
   }
 
-  pruneAgents() {
+  /** Every 10 s: agents not heard of for a while, and HTTP sessions left idle. */
+  pruneIdle() {
     const now = Date.now();
     let changed = false;
     // Streamable HTTP sessions the client left without DELETE: a client that comes back gets 404 and initializes again
     const idle = this.o.sessionIdleMs ?? 3600000;
-    for (const [sid, s] of this.httpSessions) if (now - s.used > idle) this.httpSessions.delete(sid);
+    for (const [sid, s] of this.httpSessions) if (now - s.used > idle) { this.httpSessions.delete(sid); this.agents.delete(`http:${sid}`); }
     for (const [k, a] of this.agents) {
       const ttl = a.transport === 'relay' ? 35000 : a.transport === 'http' ? 600000 : Infinity;
       if (now - a.seen > ttl) { this.agents.delete(k); changed = true; }
@@ -288,7 +295,7 @@ export class Hub {
       const result = await this.callApp(b.tool, b.args || {}, b.client, ac.signal, b.waitMs);
       send(res, 200, { ok: true, result });
     } catch (e) {
-      send(res, 200, { ok: false, error: e.message, notConnected: e instanceof AppNotConnected });
+      send(res, 200, { ok: false, error: e.message });
     }
   }
 
@@ -360,7 +367,7 @@ export class Hub {
     const one = Array.isArray(msg) ? null : msg;
     const metaVersion = one?.params?._meta?.['io.modelcontextprotocol/protocolVersion'];
     const headerVersion = req.headers['mcp-protocol-version'];
-    let ep;
+    let ep, agentKey; // which entry of the agents the client is (a session: its own; else by name)
     if (metaVersion != null) { // modern: stateless, with the request metadata headers checked against the body
       if (headerVersion && headerVersion !== metaVersion) return send(res, 400, rpcError(one.id ?? null, ERR.HEADER_MISMATCH, `Header mismatch: MCP-Protocol-Version ${headerVersion} vs ${metaVersion}`));
       const hm = req.headers['mcp-method'];
@@ -373,7 +380,8 @@ export class Hub {
       ep = this.endpoint(info => this.touchAgent(info, 'http'));
     } else if (one?.method === 'initialize') {
       const sid = randomUUID();
-      ep = this.endpoint(info => this.touchAgent(info, 'http', `http:${sid}`));
+      agentKey = `http:${sid}`;
+      ep = this.endpoint(info => this.touchAgent(info, 'http', agentKey));
       const max = this.o.maxSessions ?? 200;
       while (this.httpSessions.size >= max) { // the least recently used goes (a Map keeps the order of use, see below)
         const [old] = this.httpSessions.keys();
@@ -385,14 +393,14 @@ export class Hub {
     } else {
       const sid = req.headers['mcp-session-id'], s = sid ? this.httpSessions.get(sid) : null;
       if (sid && !s) return send(res, 404, rpcError(one?.id ?? null, -32001, 'Session not found: initialize again'));
-      if (s) { s.used = Date.now(); this.httpSessions.delete(sid); this.httpSessions.set(sid, s); } // the most recently used last
+      if (s) { s.used = Date.now(); this.httpSessions.delete(sid); this.httpSessions.set(sid, s); agentKey = `http:${sid}`; } // the most recently used last
       ep = s?.ep;
       if (!ep) { // no session (a client that does not keep one): serve statelessly
         this.stateless ||= this.endpoint(info => this.touchAgent(info, 'http'));
         ep = this.stateless;
       }
     }
-    if (ep.clientInfo) this.touchAgent(ep.clientInfo, 'http');
+    if (ep.clientInfo) this.touchAgent(ep.clientInfo, 'http', agentKey);
     const out = await ep.handle(msg);
     if (!out) { res.writeHead(202); return res.end(); }
     const status = !Array.isArray(out) && out.error && [ERR.METHOD_NOT_FOUND].includes(out.error.code) && metaVersion ? 404
@@ -417,17 +425,8 @@ function send(res, status, body) {
   res.end(text);
 }
 
+/** The body of a request (at most MAX_BODY bytes). */
 function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', c => { size += c.length; if (size > MAX_BODY) { reject(new Error('Too large')); req.destroy(); return; } chunks.push(c); });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
-function readJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -436,9 +435,13 @@ function readJson(req) {
       if (size > MAX_BODY) { reject(new RpcError(ERR.INVALID_REQUEST, 'Request too large')); req.destroy(); return; }
       chunks.push(c);
     });
-    req.on('end', () => {
-      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null); } catch (e) { reject(e); }
-    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+/** The body as JSON (null when empty). */
+async function readJson(req) {
+  const body = await readBody(req);
+  return body.length ? JSON.parse(body.toString('utf8')) : null;
 }

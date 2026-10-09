@@ -464,7 +464,7 @@ export const TOOLS = [
 ];
 
 /** Changing tools take "comment": the agent's words on the change, shown to the user with it. */
-export const COMMENT = { type: 'string', maxLength: 4000, description: 'For the user: what this change does and why, in a sentence or two. Shown with the change in the app (the proposal card in review mode, a card otherwise, the Activity)' };
+const COMMENT = { type: 'string', maxLength: 4000, description: 'For the user: what this change does and why, in a sentence or two. Shown with the change in the app (the proposal card in review mode, a card otherwise, the Activity)' };
 for (const t of TOOLS) {
   if (['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route'].includes(t.name)) t.inputSchema.properties.comment = COMMENT;
 }
@@ -472,8 +472,6 @@ for (const t of TOOLS) {
 /** Tools that the server runs itself (with help from the app), not the page. */
 export const SERVER_TOOLS = new Set(['get_project_path', 'open_map', 'create_map']);
 
-/** Tools that change the map: they fail while the user allows reading only. */
-export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 
 /** Tool calls that may wait for the user (a confirmation, a proposal under review): a longer timeout. */
 export const SLOW_TOOLS = new Set(['open_map', 'create_map', 'delete_items', 'end_change', 'wait_for_review', 'check_change', 'find_crossing', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);

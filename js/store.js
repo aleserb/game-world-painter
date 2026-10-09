@@ -35,12 +35,5 @@
     available: typeof indexedDB !== 'undefined',
     get: key => run('readonly', s => s.get(PREFIX + key)),
     set: (key, value) => run('readwrite', s => s.put(value, PREFIX + key)),
-    del: key => run('readwrite', s => s.delete(PREFIX + key)),
-    /** Remove every key that starts with prefix. */
-    async clear(prefix) {
-      const keys = await run('readonly', s => s.getAllKeys());
-      const mine = keys.filter(k => typeof k === 'string' && k.startsWith(PREFIX + prefix));
-      if (mine.length) await run('readwrite', s => { mine.forEach(k => s.delete(k)); return null; });
-    },
   };
 })(window.ME = window.ME || {});

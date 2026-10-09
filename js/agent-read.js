@@ -4,8 +4,8 @@
 'use strict';
 
 const T = ME.agentTools = ME.agentTools || {};
-const { G, fail, region, regionMask, presence, itemsMask, distanceField, slopeField, blur, components, bounds, worldBox,
-  cellOf, cellX, cellZ, layerOf, itemLayers, heightLayer, zonesLayer, coverLayers, blockingMask, metersIn, fmtU, r2, num, pt, A, any } = ME.agentInternals;
+const { G, fail, region, regionMask, presence, distanceField, slopeField, bounds, worldBox,
+  cellOf, cellX, cellZ, layerOf, itemLayers, heightLayer, zonesLayer, fmtU, r2, pt, A, any } = ME.agentInternals;
 
 const center = it => A().itemCenter(it);
 const pct = (a, b) => (b ? Math.round(a / b * 1000) / 10 : 0);
@@ -160,7 +160,7 @@ T._set_project_path = ({ path }) => {
 // ------------------------------------------------------------------------------------------------ images
 
 T.render_map = args => {
-  const g = G(), { S } = g;
+  const g = G();
   let box;
   if (args.region) {
     const r = region(args.region, g), [a, b, c, d] = worldBox(g, r.b), pad = Math.max(c - a, d - b) * 0.06 + g.c;

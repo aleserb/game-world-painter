@@ -127,7 +127,7 @@ agent.setUrl = url => { settings.url = url.trim() || DEFAULTS.url; saveSettings(
 
 // The full path of the project folder on disk is known only when the MCP server found it (get_project_path) or the
 // user typed it (Settings): kept per project in this browser.
-const pathKey = () => { const { S, folder } = ME.app; return folder && S.project ? `gwp-folder-path|${folder.name}|${S.project.created || S.project.title}` : null; };
+const pathKey = () => { const k = ME.app.mapKey(); return k && ME.app.folder ? `gwp-folder-path|${k}` : null; };
 agent.setProjectPath = p => {
   const k = pathKey();
   if (!k) return;

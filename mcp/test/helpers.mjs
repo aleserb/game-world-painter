@@ -81,12 +81,12 @@ export function req(port, method, path, { body, headers = {} } = {}) {
 }
 
 /** A fake app: connects to the SSE bridge and answers calls with handler(tool, args). */
-export function fakeApp(port, handler, origin = 'http://localhost:8000') {
+export function fakeApp(port, handler, origin = 'http://localhost:8000', api = 1) {
   const session = 'test-' + Math.random().toString(36).slice(2);
   const events = [];
   let res;
   const ready = new Promise((resolve, reject) => {
-    const r = http.get({ host: '127.0.0.1', port, path: `/app/events?session=${session}&api=1&title=Test`, headers: { Host: `127.0.0.1:${port}`, Origin: origin, Accept: 'text/event-stream' } }, response => {
+    const r = http.get({ host: '127.0.0.1', port, path: `/app/events?session=${session}&api=${api}&title=Test`, headers: { Host: `127.0.0.1:${port}`, Origin: origin, Accept: 'text/event-stream' } }, response => {
       res = response;
       let buf = '';
       response.on('data', async d => {

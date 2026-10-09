@@ -8,7 +8,7 @@
 
 const T = ME.agentTools;
 const { G, fail, region, slopeField, distanceField, bounds, cellOf, cellX, cellZ, layerOf, heightLayer, waterMask, isCrossing, nameOf,
-  metersIn, fmtU, r2, num, pt, A } = ME.agentInternals;
+  metersIn, fmtU, r2, pt, A } = ME.agentInternals;
 const { mapCanvas } = ME.agentRead;
 
 const WATER_OK_RE = /bridge|crossing|ford|stepping|plank|walkway|boardwalk|ferry|pier|dock|jetty|wharf|boat|ship|raft|buoy|reed|lily|fish|water|mill|net|canoe/i;
@@ -564,5 +564,4 @@ T.find_crossing = args => {
   };
 };
 
-ME.agentCheckInternals = { shapeOf, overlapDepth, checkItems, flowAt, facts };
 })(window.ME);

@@ -1,20 +1,21 @@
 // Layers of a GameWorld Painter project. Every layer shows one kind of thing on the map seen from above; see README.md.
-//   image     a picture stretched over the whole map (the render of the game map, a sketch)
+//   image     a picture stretched over the whole map (a render of the game map, a sketch)
 //   mask      0..255 per cell: where something is and how dense (trees, grass...)
 //   category  a class index per cell (ground texture, zones, custom classes)
-//   height    meters per cell (terrain)
+//   height    the height of every cell, in the unit of the map (terrain)
 //   objects   a list of placed things with position, rotation, footprint and properties
 //   notes     text notes pinned to the map
 //   vector    paths: roads, rivers, borders as lines through points (smooth or straight), with a width; closed ones are areas
 // Every layer is a file of the project folder (README.md): masks are 8-bit grayscale PNGs, categories 8-bit palette
-// PNGs (index = class), heights 16-bit grayscale PNGs (meters = offset + value * step), objects and notes JSON,
+// PNGs (index = class), heights 16-bit grayscale PNGs (height = offset + value * step), objects, notes and paths JSON,
 // pictures as they are. A layer keeps "base", its content as it is on the disk, to merge changes made there by others (an AI agent).
 (function (ME) {
   'use strict';
 
 const TYPE_NAMES = { mask: 'Mask', category: 'Categories', height: 'Height', objects: 'Objects', notes: 'Notes', vector: 'Vector', image: 'Picture' };
 
-/** The map rectangle: {x0, z0 (the north-west corner, m), width, height (m), cols, rows (cells)}; the cells are square.
+/** The map rectangle: {x0, z0 (the north-west corner), width, height (in the unit of the map), cols, rows (cells)}; the
+ *  cells are square.
  *  Old projects had a square {x0, z0, size, px}. */
 function normWorld(w) {
   if (w.width != null) {
@@ -110,8 +111,7 @@ class ImageLayer extends Layer {
 
   async fileData() { return this.bytes || null; }
 
-  merge(base, disk) {
-    this.apply(disk); // a picture cannot be merged: the disk wins unless the picture was replaced here
+  merge() { // only when it was replaced here: a picture cannot be merged, the one replaced here is kept (and saved)
     return 0;
   }
 
@@ -513,9 +513,8 @@ class ObjectLayer extends Layer {
     for (let k = this.items.length - 1; k >= 0; k--) {
       const it = this.items[k];
       if (this.meta.style === 'footprint') {
-        const [lx, lz] = localOf(it, x, z);
-        const k = this.project.k || 1;
-        if (Math.abs(lx) <= Math.max(it.w || k, 0.1 * k) / 2 + tol && Math.abs(lz) <= Math.max(it.d || k, 0.1 * k) / 2 + tol) return it;
+        const [lx, lz] = localOf(it, x, z), u = this.project.k || 1; // u: a meter in the unit of the map
+        if (Math.abs(lx) <= Math.max(it.w || u, 0.1 * u) / 2 + tol && Math.abs(lz) <= Math.max(it.d || u, 0.1 * u) / 2 + tol) return it;
       } else if (this.meta.style === 'link' && it.a && it.b) {
         const r = this.markerRadius(view) * 0.7 / view.scale + tol;
         if (Math.hypot(x - it.a[0], z - it.a[1]) <= r || Math.hypot(x - it.b[0], z - it.b[1]) <= r) return it;
@@ -806,5 +805,5 @@ function makeLayer(meta, project) {
   }
 }
 
-Object.assign(ME, { TYPE_NAMES, normWorld, normRect, hexToRgb, rgba, footprintCorners, localOf, label, drawMarker, makeLayer, pathSamples, insidePoly });
+Object.assign(ME, { TYPE_NAMES, normWorld, normRect, rgba, footprintCorners, label, makeLayer, pathSamples, insidePoly });
 })(window.ME = window.ME || {});
