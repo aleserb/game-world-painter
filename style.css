@@ -241,17 +241,47 @@ a { color: #9cc8ff; }
 .obj-row.head:hover { background: none; }
 
 /* 3D */
-#view3d { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; background: #141416; }
+#view3d { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; background: #121214; }
 #view3d .v3-head {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4.5px; padding: 3.75px 6px; background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 6px; padding: 4.5px 6px; background: var(--panel); border-bottom: 1px solid var(--line);
 }
-#view3d .v3-head button:not(.ibtn) { padding: 2.25px 6px; }
-#view3d .v3-head .check { display: flex; align-items: center; gap: 3px; color: var(--muted); }
-#view3d .v3-head input[type=range] { width: 60px; }
-#view3d canvas { flex: 1; min-height: 0; width: 100%; display: block; cursor: grab; touch-action: none; }
+/* the camera presets: one segmented control */
+#view3d .v3-cams {
+  display: inline-flex; gap: 1.5px; padding: 1.5px; background: var(--field); border: 1px solid var(--line); border-radius: 6px; min-width: 0;
+}
+#view3d .v3-cams button {
+  display: inline-flex; align-items: center; gap: 4.5px; padding: 2.25px 7.5px; border-radius: 4.5px; background: none;
+  color: var(--muted); white-space: nowrap; transition: background 0.12s, color 0.12s;
+}
+#view3d .v3-cams button:hover { background: var(--hover); color: var(--text); }
+#view3d .v3-cams button.on { background: var(--accent-soft); color: #9cc8ff; box-shadow: inset 0 0 0 1px rgba(59, 142, 234, 0.55); }
+#view3d .v3-cams .icon svg { width: 11.25px; height: 11.25px; }
 #view3d .v3-note { padding: 3px 6px; font-size: 8.25px; color: #f0b45e; background: #26221c; border-bottom: 1px solid var(--line); }
+#view3d .v3-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+#view3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#view3d canvas:active { cursor: grabbing; }
 #view3d .v3-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted); pointer-events: none; }
+/* what covers the ground and the height scale: a floating bar over the view */
+#view3d .v3-bar {
+  position: absolute; left: 7.5px; bottom: 7.5px; max-width: calc(100% - 15px); box-sizing: border-box;
+  display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 7.5px; border-radius: 7.5px;
+  background: rgba(28, 28, 32, 0.8); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+#view3d .v3-bar label { display: flex; align-items: center; gap: 4.5px; color: var(--muted); margin: 0; min-width: 0; }
+#view3d .v3-bar .icon svg { width: 11.25px; height: 11.25px; }
+#view3d .v3-bar select {
+  background-color: transparent; border-color: transparent; padding-top: 1.5px; padding-bottom: 1.5px; color: var(--text); min-width: 0;
+}
+#view3d .v3-bar select:hover { background-color: rgba(255, 255, 255, 0.06); }
+#view3d .v3-bar input[type=range] { width: 72px; }
+#view3d .v3-exag-v { min-width: 24px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+#view3d .v3-sep { width: 1px; align-self: stretch; margin: 2.25px 0; background: rgba(255, 255, 255, 0.1); }
+/* narrow panels: icons only */
+@container v3 (max-width: 240px) { #view3d .v3-cams .label { display: none; } #view3d .v3-cams button { padding: 2.25px 6px; } }
+#view3d { container: v3 / inline-size; }
+/* the dock tabs have no close button: the 3D preview closes with the 3D switch in the header (P) or the tab's menu */
+#dock .dv-default-tab .dv-default-tab-action { display: none; }
 #map-dlg .presets { display: flex; flex-wrap: wrap; gap: 3.75px; margin: 4.5px 0 7.5px; }
 #map-dlg .presets button { padding: 3px 6.75px; }
 #map-dlg .info { color: var(--text); }

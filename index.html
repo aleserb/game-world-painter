@@ -74,22 +74,31 @@
   <section id="props" class="panel-body"></section>
   <div id="view3d">
     <div class="v3-head">
-      <select class="v3-tex" title="What covers the ground">
-        <option value="map">Visible layers</option>
-        <option value="height">Height colors</option>
-      </select>
-      <label class="check" title="Height scale">↕ <input type="range" class="v3-exag" min="0.5" max="5" step="0.1" value="1"> <span class="v3-exag-v">1.0×</span></label>
+      <div class="v3-cams" role="group" aria-label="Camera">
+        <button type="button" data-preset="overview" title="The whole map (or double-click the view)"><span data-icon="map"></span><span class="label">Overview</span></button>
+        <button type="button" data-preset="top" title="Straight from above"><span data-icon="arrow-down-to-dot"></span><span class="label">Top</span></button>
+        <button type="button" data-preset="close" title="A close view at the middle of the 2D view: 45°, 20 m away (or as much in the unit of the map), FOV 40°"><span data-icon="scan-eye"></span><span class="label">Close-up</span></button>
+      </div>
       <span class="spacer"></span>
-      <button data-preset="overview" title="The whole map (double-click)">Overview</button>
-      <button data-preset="view" title="What the 2D view shows">2D view</button>
-      <button data-preset="top" title="Straight from above">Top</button>
-      <button data-preset="close" title="A close view (45°, 20 m away or the same in the unit of the map, FOV 40°) at the middle of the 2D view">Close-up</button>
-      <button class="v3-max ibtn" data-icon="maximize" title="Maximize / restore the panel"></button>
-      <button class="v3-close ibtn" data-icon="x" title="Close (P)"></button>
+      <button type="button" class="v3-max ibtn" data-icon="maximize" title="Maximize / restore the panel"></button>
     </div>
     <div class="v3-note" hidden></div>
-    <canvas></canvas>
-    <div class="v3-msg"></div>
+    <div class="v3-stage">
+      <canvas title="Drag: turn · right-drag or Shift+drag: move · wheel: zoom · double-click: the whole map"></canvas>
+      <div class="v3-msg"></div>
+      <div class="v3-bar">
+        <label class="v3-ground" title="What covers the ground"><span data-icon="layers"></span>
+          <select class="v3-tex">
+            <option value="map">Visible layers</option>
+            <option value="height">Height colors</option>
+          </select>
+        </label>
+        <span class="v3-sep"></span>
+        <label class="v3-height" title="Height scale (exaggerates the terrain)"><span data-icon="mountain"></span>
+          <input type="range" class="v3-exag" min="0.5" max="5" step="0.1" value="1"><span class="v3-exag-v">1.0×</span>
+        </label>
+      </div>
+    </div>
   </div>
 </div>
 <footer id="statusbar">

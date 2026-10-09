@@ -18,6 +18,12 @@ Thanks for helping! Issues and pull requests are welcome.
   together with the code, and keep old files readable.
 - **The demo**: `python3 examples/make_demo.py` (numpy, Pillow) rebuilds `examples/demo-island`.
 
+## Screenshots
+
+`node tests/screenshots.mjs` remakes the README's screenshots (`docs/screenshot.jpg`, `docs/screenshot-agent.jpg`)
+from the demo island in headless Chrome, with an AI agent connected through the MCP server. Run it after visible
+changes to the interface.
+
 ## Releasing
 
 1. Write the notes in `CHANGELOG.md` under `## <version> — <date>`, and set the same version in `mcp/package.json`.

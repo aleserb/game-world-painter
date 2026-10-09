@@ -13,6 +13,8 @@ GameWorld Painter ── results: HTTP POST ──▶ MCP server
 GameWorld Painter ── autosave ──▶ the project folder (PNG and JSON)
 ```
 
+![An AI agent's change waiting for review in GameWorld Painter: a bridge and a hut outlined on the map, the agent's text and self-check on a card](https://raw.githubusercontent.com/aleserb/game-world-painter/main/docs/screenshot-agent.jpg)
+
 The agent starts the server; the app (with **AI Agent** turned on in its header) connects to it. The tools run in the
 page, on the open map: what the agent changes appears at once and is one step of the app's undo.
 

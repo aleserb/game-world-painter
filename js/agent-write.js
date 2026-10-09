@@ -76,8 +76,10 @@ function cleanItems(g, L, list) {
   });
 }
 
+/** The box around items: path points, footprint corners, both ends of links, else the position. */
 const boxOf = items => {
-  const pts = items.flatMap(it => it.points || [[it.x, it.z]]);
+  const k = G().k;
+  const pts = items.flatMap(it => it.points || (it.w != null ? ME.footprintCorners(it, k) : [[it.x, it.z], ...(it.a && it.b ? [it.a, it.b] : [])]));
   const xs = pts.map(p => p[0]), zs = pts.map(p => p[1]);
   return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)];
 };

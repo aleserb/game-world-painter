@@ -344,11 +344,11 @@ void main() { o = u_color; }`;
     /** Units of the map per meter (1 for meters, 100 for centimeters...). */
     k() { return (this.app.unitK && this.app.unitK()) || 1; }
 
-    /** 'overview' (the whole map), 'top' (straight down), 'close' (a close view at the middle of the 2D view), 'view' (the 2D view). */
+    /** 'overview' (the whole map), 'top' (straight down), 'close' (a close view at the middle of the 2D view). */
     preset(name) {
       const world = this.app.world();
       if (!world) return;
-      const c = this.cam, [vx, vz, vw] = this.app.viewCenter(), big = Math.max(world.width, world.height);
+      const c = this.cam, [vx, vz] = this.app.viewCenter(), big = Math.max(world.width, world.height);
       const mid = [world.x0 + world.width / 2, 0, world.z0 + world.height / 2];
       c.yaw = 0;
       c.fov = CLOSE.fov;
@@ -357,13 +357,19 @@ void main() { o = u_color; }`;
       } else if (name === 'top') {
         c.pitch = 89.5 * Math.PI / 180; c.dist = big / (2 * Math.tan(c.fov * Math.PI / 360)) * 1.05;
         c.target = mid;
-      } else if (name === 'view') {
-        c.pitch = 0.75; c.dist = Math.min(vw, big) * 1.2; c.target = [vx, 0, vz];
       } else {
         c.pitch = 0.72; c.dist = big * 1.35; c.target = mid;
       }
       c.target[1] = name === 'overview' || name === 'top' ? 0 : this.groundAt(c.target[0], c.target[2]);
+      this.camMoved(name === 'close' ? 'close' : name === 'top' ? 'top' : 'overview');
       this.requestDraw();
+    }
+
+    /** The camera is at a preset (its name) or was moved by hand (null): the buttons show it. */
+    camMoved(name = null) {
+      if (this.camName === name) return;
+      this.camName = name;
+      this.onCamera?.(name);
     }
 
     eye() {
@@ -384,6 +390,7 @@ void main() { o = u_color; }`;
         if (!drag) return;
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y, c = this.cam;
         drag.x = e.clientX; drag.y = e.clientY;
+        if (dx || dy) this.camMoved();
         if (drag.pan) {
           const k = c.dist * Math.tan(c.fov * Math.PI / 360) * 2 / Math.max(cv.clientHeight, 1);
           const right = [Math.cos(c.yaw), -Math.sin(c.yaw)], fwd = [-Math.sin(c.yaw), -Math.cos(c.yaw)];
@@ -405,6 +412,7 @@ void main() { o = u_color; }`;
         this.dragging = true;
         this.wheelTimer = setTimeout(() => { this.dragging = false; this.requestDraw(); }, 200);
         const world = this.app.world(), dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        this.camMoved();
         this.cam.dist = Math.max(3 * this.k(), Math.min((world ? Math.max(world.width, world.height) : 500) * 4, this.cam.dist * Math.exp(dy * (e.ctrlKey ? 0.01 : 0.0015))));
         this.requestDraw();
       }, { passive: false });

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- The 3D preview panel looks cleaner: the camera presets (Overview, Top, Close-up, with icons) are one segmented
+  control that shows which one is in use until the camera moves; what covers the ground and the height scale float
+  over the view; a narrow panel shows icons only. The "2D view" preset and the panel's close buttons are gone — the 3D
+  switch in the header (P) opens and closes it.
+- The outline of an AI proposal on the map encloses the footprints of its objects (not only their centers).
+- New screenshots in the README, made by `node tests/screenshots.mjs`.
+
 ## 0.2.2 — 2026-10-09
 
 - Long sessions with an AI agent no longer grow memory: the Activity keeps the latest 1000 calls and draws them 200

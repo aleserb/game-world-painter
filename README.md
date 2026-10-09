@@ -106,6 +106,9 @@ straight across the river with both ends on land (`find_crossing` finds where). 
 disk, for work with scripts and other tools; `open_map` and `create_map` open a map by its path or make a new one —
 the server opens the app in the browser if needed, and the app reads and writes that folder through the server.
 
+![An AI agent's change waiting for review on the map: a bridge across the river and a hut, outlined, with the agent's
+title, explanation and self-check on a card, and Accept, Change… and Reject](docs/screenshot-agent.jpg)
+
 1. Add the server to your agent once, e.g. `claude mcp add --scope user game-world-painter -- npx -y game-world-painter-mcp`
    (`npx -y game-world-painter-mcp setup` prints the command for each agent; details in [mcp/README.md](mcp/README.md)).
 2. In the app, turn on **AI Agent** in the header: the LED turns green when an agent is connected, and its dialog

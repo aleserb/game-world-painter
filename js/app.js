@@ -4083,9 +4083,10 @@ const view3d = new ME.View3D($('#view3d'), {
   const p3 = $('#view3d'), exag = p3.querySelector('.v3-exag');
   view3d.onToggle = on => { $('#btn3d').checked = on; };
   $('#btn3d').onchange = () => { if ($('#btn3d').checked) show3d(); else hide3d(); };
-  p3.querySelector('.v3-close').onclick = () => hide3d();
   p3.querySelector('.v3-max').onclick = () => { dock.toggleMaximize('view3d'); view3d.requestDraw(); };
-  p3.querySelectorAll('[data-preset]').forEach(b => { b.onclick = () => view3d.preset(b.dataset.preset); });
+  const cams = p3.querySelectorAll('[data-preset]');
+  cams.forEach(b => { b.onclick = () => view3d.preset(b.dataset.preset); });
+  view3d.onCamera = name => cams.forEach(b => b.classList.toggle('on', b.dataset.preset === name)); // until the camera moves
   p3.querySelector('.v3-tex').onchange = e => { view3d.texMode = e.target.value; view3d.seen.map = null; view3d.tick(); };
   exag.oninput = () => {
     view3d.setExag(+exag.value);
