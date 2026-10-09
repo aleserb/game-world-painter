@@ -1,0 +1,35 @@
+# Publishes the MCP server (mcp/, the npm package game-world-painter-mcp) when a version tag v<version> is pushed:
+# the MCP tests first, then npm trusted publishing (OIDC: no token in the repository) with provenance. On npmjs.com
+# the package's trusted publisher is this repository and this workflow (npm.yml). A manual run only does a dry run.
+name: npm
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # trusted publishing and provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm 11.5.1 or newer (trusted publishing)
+        run: npm install -g npm@latest
+      - name: The tag is the package version
+        if: github.event_name == 'push'
+        run: |
+          v="v$(node -p "require('./mcp/package.json').version")"
+          if [ "$v" != "$GITHUB_REF_NAME" ]; then echo "The tag $GITHUB_REF_NAME is not the package version $v (mcp/package.json)"; exit 1; fi
+      - name: Test
+        run: node --test mcp/test/*.test.mjs
+      - name: Publish
+        working-directory: mcp
+        run: npm publish --access public --provenance ${{ github.event_name == 'push' && '' || '--dry-run' }}

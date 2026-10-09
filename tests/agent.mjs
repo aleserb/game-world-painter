@@ -347,8 +347,8 @@ try {
   const dlg = await ev(`(d => [d.open, d.querySelector('.agent-status b').textContent, [...d.querySelectorAll('.tabs button')].map(b => b.textContent)])(document.getElementById('agent-dlg'))`);
   check(dlg[0] && dlg[1] === 'Connected' && dlg[2].length === 6, 'the AI Agent dialog', JSON.stringify(dlg));
   await ev(`[...document.querySelectorAll('#agent-dlg .tabs button')].find(b => b.textContent.startsWith('Agents')).click(); true`);
-  const snippet = await ev(`document.querySelector('#agent-dlg .code pre').textContent`);
-  check(snippet.includes('mcp/server.mjs') && snippet.includes(`--port ${port}`), 'the agent commands use the real server path and port', snippet);
+  const snippet = await ev(`document.querySelector('#agent-dlg .code pre').textContent`), clone = await ev(`document.getElementById('agent-dlg').textContent.includes('mcp/server.mjs')`);
+  check(snippet.includes('npx -y game-world-painter-mcp') && snippet.includes(`--port ${port}`) && clone, 'the agent commands: npx with the port (and the clone\'s path, as it runs from one)', snippet);
   const skill = await ev(`Promise.all(['SKILL.md', 'references/regions.md', 'references/recipes.md'].map(f => fetch('skills/game-world-painter/' + f).then(r => r.ok)))`);
   check(skill.every(Boolean), 'the skill files are served for the download');
   const log = await ev('ME.agent.log.length');

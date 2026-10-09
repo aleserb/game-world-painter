@@ -52,21 +52,23 @@ function openDialog() {
 }
 
 const port = () => { try { return +new URL(S.url).port || 80; } catch { return 38765; } };
-const script = () => agent.server?.command?.script || '/path/to/game-world-painter/mcp/server.mjs';
+const PACKAGE = 'game-world-painter-mcp'; // on npm: agents start it with npx (mcp/ in the repository)
 const q = s => (/[\s"'$]/.test(s) ? JSON.stringify(s) : s);
+/** The server connected now runs from a clone of the repository (not from npm): its path. */
+const clonePath = () => (agent.server?.command && !agent.server.command.npm ? agent.server.command.script : null);
 
 function commands() {
-  const p = port(), extra = p !== 38765 ? ['--port', String(p)] : [], cmd = `node ${q(script())}${extra.length ? ' ' + extra.join(' ') : ''}`;
-  const args = [script(), ...extra];
-  const json = (key, more = {}) => JSON.stringify({ [key]: { 'game-world-painter': { ...more, command: 'node', args } } }, null, 2);
+  const p = port(), extra = p !== 38765 ? ['--port', String(p)] : [];
+  const [command, ...args] = ['npx', '-y', PACKAGE, ...extra], cmd = [command, ...args].map(q).join(' ');
+  const json = (key, more = {}) => JSON.stringify({ [key]: { 'game-world-painter': { ...more, command, args } } }, null, 2);
   return {
     claude: { name: 'Claude Code', how: 'Run once in a terminal:', code: `claude mcp add --scope user game-world-painter -- ${cmd}` },
-    codex: { name: 'Codex', how: 'Run once in a terminal (or add it to ~/.codex/config.toml):', code: `codex mcp add game-world-painter -- ${cmd}\n\n# ~/.codex/config.toml\n[mcp_servers.game-world-painter]\ncommand = "node"\nargs = ${JSON.stringify(args)}` },
+    codex: { name: 'Codex', how: 'Run once in a terminal (or add it to ~/.codex/config.toml):', code: `codex mcp add game-world-painter -- ${cmd}\n\n# ~/.codex/config.toml\n[mcp_servers.game-world-painter]\ncommand = "${command}"\nargs = ${JSON.stringify(args)}` },
     copilot: { name: 'GitHub Copilot CLI', how: 'Run once in a terminal (or /mcp add inside Copilot CLI):', code: `copilot mcp add game-world-painter -- ${cmd}` },
     vscode: { name: 'VS Code (Copilot Chat)', how: 'Add to .vscode/mcp.json (or run "MCP: Add Server"):', code: json('servers', { type: 'stdio' }) },
     cursor: { name: 'Cursor', how: 'Add to ~/.cursor/mcp.json:', code: json('mcpServers') },
     desktop: { name: 'Claude Desktop', how: 'Add to claude_desktop_config.json (Settings → Developer → Edit Config):', code: json('mcpServers') },
-    gemini: { name: 'Gemini CLI', how: 'Run once in a terminal:', code: `gemini mcp add --scope user game-world-painter node ${q(script())}${extra.length ? ' ' + extra.join(' ') : ''}` },
+    gemini: { name: 'Gemini CLI', how: 'Run once in a terminal:', code: `gemini mcp add --scope user game-world-painter -- ${cmd}` },
     http: { name: 'By URL (any client)', how: `Run the server yourself, then add the URL to the client (e.g. claude mcp add --transport http, copilot mcp add --transport http):`, code: `${cmd} --http\n\nhttp://127.0.0.1:${p}/mcp` },
   };
 }
@@ -95,8 +97,8 @@ const step = (n, title, ...body) => el('div', { class: 'step' }, el('span', { cl
 
 const TABS = {
   start: ['Get started', () => [
-    step(1, 'Add the MCP server to your agent', el('p', { class: 'muted' }, 'Once per agent: the agent then starts the server by itself. The server is in the repository (mcp/server.mjs, Node.js 18+): clone it with ',
-      el('code', {}, 'git clone https://github.com/aleserb/game-world-painter'), '. The commands for each agent are in the Agents tab; ', el('code', {}, 'node mcp/server.mjs setup'), ' prints them too.'),
+    step(1, 'Add the MCP server to your agent', el('p', { class: 'muted' }, 'Once per agent: the agent then starts the server by itself with npx (the npm package ',
+      el('a', { href: `https://www.npmjs.com/package/${PACKAGE}`, target: '_blank', rel: 'noopener' }, PACKAGE), ', Node.js 18+, nothing else to install). The commands for each agent are in the Agents tab; ', el('code', {}, `npx -y ${PACKAGE} setup`), ' prints them too.'),
       codeBlock(commands()[client].code.split('\n\n')[0])),
     step(2, 'Turn on AI Agent here', el('p', { class: 'muted' }, `The app connects to the server at ${S.url} (Settings) and waits for it. The first time Chrome may ask to let the page reach this device: allow it.`)),
     step(3, 'Install the skill (recommended)', el('p', { class: 'muted' }, 'It teaches the agent how to plan and check its work on the map. See the Skill tab.')),
@@ -117,7 +119,8 @@ const TABS = {
       el('div', { class: 'row' }, el('label', {}, 'Agent'), pick),
       el('p', { class: 'muted' }, cmds[client].how),
       codeBlock(cmds[client].code),
-      el('p', { class: 'muted small' }, agent.server ? `The path is where your server runs (${agent.server.command?.script}).` : 'Replace the path with where you cloned the repository; once the server is connected, the right path shows here.'),
+      el('p', { class: 'muted small' }, 'Node.js 18 or newer. On Windows, if the agent cannot start npx: command "cmd" with args ["/c", "npx", "-y", "' + PACKAGE + '"].'),
+      clonePath() ? el('p', { class: 'muted small' }, 'The server connected now runs from a clone of the repository: instead of npx, ', el('code', {}, `node ${q(clonePath())}`), ' works too.') : null,
       el('p', { class: 'muted small' }, 'Several agents can use the map at once: the first one\'s server owns the port, the others relay through it.'),
     ];
   }],
@@ -165,7 +168,7 @@ const TABS = {
     ];
   }],
   help: ['Troubleshooting', () => [el('ul', { class: 'trouble' }, ...[
-    ['The LED stays amber', 'No server at the URL. Agents start it when they start (after you add it); or run node mcp/server.mjs in a terminal. Check the port in Settings.'],
+    ['The LED stays amber', `No server at the URL. Agents start it when they start (after you add it); or run npx -y ${PACKAGE} in a terminal. Check the port in Settings.`],
     ['Chrome asked to “access other apps and services on this device”', 'Allow it: the page talks to the server on this computer. If you denied it, allow it again in the site settings (the icon left of the address).'],
     ['The page is opened from the disk (file://)', 'Start the server with --allow-origin null, or open the app from a local web server or the hosted site.'],
     ['Port in use', 'Another program uses 38765: start the server with --port 38766 and set http://127.0.0.1:38766 here.'],

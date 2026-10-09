@@ -17,3 +17,12 @@ Thanks for helping! Issues and pull requests are welcome.
 - **The file format** is a contract with other programs: change [docs/project-format.md](docs/project-format.md)
   together with the code, and keep old files readable.
 - **The demo**: `python3 examples/make_demo.py` (numpy, Pillow) rebuilds `examples/demo-island`.
+
+## Releasing
+
+1. Move the "Unreleased" notes in `CHANGELOG.md` under the new version, and set the same version in
+   `mcp/package.json`.
+2. Commit, then tag and push: `git tag v0.2.1 && git push origin v0.2.1`.
+3. The `npm` workflow runs the MCP tests and publishes `mcp/` to npm as `game-world-painter-mcp` with provenance
+   (npm trusted publishing: no token; on npmjs.com the package trusts this repository's `npm.yml`). The site deploys
+   from `main` as usual.

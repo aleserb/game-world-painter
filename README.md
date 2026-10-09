@@ -94,8 +94,9 @@ To add a layer, add its entry to `metadata.json` and write its file.
 
 ## AI agents
 
-For more than editing files, connect an agent to the app through the **MCP server** in [`mcp/`](mcp/) (Node.js 18+,
-no dependencies). The agent then gets tools to understand the map (an overview, images with a grid, facts about any
+For more than editing files, connect an agent to the app through the **MCP server**
+[`game-world-painter-mcp`](https://www.npmjs.com/package/game-world-painter-mcp) on npm (the code is in [`mcp/`](mcp/);
+Node.js 18+, no dependencies). The agent then gets tools to understand the map (an overview, images with a grid, facts about any
 region, items with distances, open or hidden spots, walkability, routes, spacing and groups) and to change it
 (scatter objects naturally, paint masks and categories with soft edges and noise, raise, flatten, smooth and slope
 the terrain, add, change and delete items, create layers), with regions such as *the selected area*, *the village
@@ -105,8 +106,8 @@ straight across the river with both ends on land (`find_crossing` finds where). 
 disk, for work with scripts and other tools; `open_map` and `create_map` open a map by its path or make a new one —
 the server opens the app in the browser if needed, and the app reads and writes that folder through the server.
 
-1. Add the server to your agent once, e.g. `claude mcp add --scope user game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs`
-   (`node mcp/server.mjs setup` prints the command for each agent; details in [mcp/README.md](mcp/README.md)).
+1. Add the server to your agent once, e.g. `claude mcp add --scope user game-world-painter -- npx -y game-world-painter-mcp`
+   (`npx -y game-world-painter-mcp setup` prints the command for each agent; details in [mcp/README.md](mcp/README.md)).
 2. In the app, turn on **AI Agent** in the header: the LED turns green when an agent is connected, and its dialog
    shows the setup for each agent, the activity and the settings (read only, confirm deletions, **review mode** — on by
    default: each change of the agent is a proposal you accept, send back with a comment, or reject). The agent's

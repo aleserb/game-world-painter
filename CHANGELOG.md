@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-09
 
+- The MCP server is on npm: [`game-world-painter-mcp`](https://www.npmjs.com/package/game-world-painter-mcp) —
+  agents start it with `npx -y game-world-painter-mcp` (`setup` prints the command for each agent; the app's AI Agent
+  dialog shows them). The package bundles the skill and the project format (MCP resources); releases are published
+  from GitHub Actions on a version tag, with provenance.
 - AI agents through MCP: a local server (`mcp/`, no dependencies, MCP 2024-11-05 … 2026-07-28 over stdio and
   Streamable HTTP) that Claude Code, Codex, GitHub Copilot, VS Code, Cursor, Gemini CLI and other agents start; the app
   connects to it (AI Agent switch and LED in the header, a dialog with the setup per agent, the skill, the activity

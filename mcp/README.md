@@ -1,5 +1,7 @@
 # GameWorld Painter MCP server
 
+[![npm](https://img.shields.io/npm/v/game-world-painter-mcp)](https://www.npmjs.com/package/game-world-painter-mcp)
+
 Lets AI agents — Claude Code, Codex, GitHub Copilot (CLI and VS Code), Cursor, Claude Desktop, Gemini CLI and any other
 [Model Context Protocol](https://modelcontextprotocol.io) client — read and edit the map open in
 [GameWorld Painter](https://aleserb.github.io/game-world-painter/). Node.js 18 or newer, no dependencies.
@@ -17,28 +19,30 @@ page, on the open map: what the agent changes appears at once and is one step of
 
 ## Set up
 
-1. Get the server: `git clone https://github.com/aleserb/game-world-painter` (it is `mcp/server.mjs`).
-2. Add it to your agent once. `node mcp/server.mjs setup` prints these lines with the right path:
+1. Add the server to your agent once — it is the npm package
+   [`game-world-painter-mcp`](https://www.npmjs.com/package/game-world-painter-mcp): the agent starts it with `npx`
+   (Node.js 18 or newer, nothing else to install). `npx -y game-world-painter-mcp setup` prints these lines:
 
    | Agent | |
    |-------|-|
-   | Claude Code | `claude mcp add --scope user game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs` |
-   | Codex | `codex mcp add game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs` |
-   | GitHub Copilot CLI | `copilot mcp add game-world-painter -- node /path/to/game-world-painter/mcp/server.mjs` |
-   | Gemini CLI | `gemini mcp add --scope user game-world-painter node /path/to/game-world-painter/mcp/server.mjs` |
-   | VS Code | `.vscode/mcp.json`: `{"servers": {"game-world-painter": {"type": "stdio", "command": "node", "args": ["/path/to/game-world-painter/mcp/server.mjs"]}}}` |
-   | Cursor, Claude Desktop, Windsurf… | `{"mcpServers": {"game-world-painter": {"command": "node", "args": ["/path/to/game-world-painter/mcp/server.mjs"]}}}` |
-   | Clients configured by URL | run `node mcp/server.mjs --http` and use `http://127.0.0.1:38765/mcp` |
+   | Claude Code | `claude mcp add --scope user game-world-painter -- npx -y game-world-painter-mcp` |
+   | Codex | `codex mcp add game-world-painter -- npx -y game-world-painter-mcp` |
+   | GitHub Copilot CLI | `copilot mcp add game-world-painter -- npx -y game-world-painter-mcp` |
+   | Gemini CLI | `gemini mcp add --scope user game-world-painter -- npx -y game-world-painter-mcp` |
+   | VS Code | `.vscode/mcp.json`: `{"servers": {"game-world-painter": {"type": "stdio", "command": "npx", "args": ["-y", "game-world-painter-mcp"]}}}` |
+   | Cursor, Claude Desktop, Windsurf… | `{"mcpServers": {"game-world-painter": {"command": "npx", "args": ["-y", "game-world-painter-mcp"]}}}` |
+   | Clients configured by URL | run `npx -y game-world-painter-mcp --http` and use `http://127.0.0.1:38765/mcp` |
 
-3. Open the app, open your map and turn on **AI Agent** in the header. The LED is amber while the app waits for the
+   On Windows, if a client cannot start `npx`: `"command": "cmd", "args": ["/c", "npx", "-y", "game-world-painter-mcp"]`.
+   From a clone of [the repository](https://github.com/aleserb/game-world-painter): `node /path/to/game-world-painter/mcp/server.mjs` instead of `npx -y game-world-painter-mcp`.
+
+2. Open [the app](https://aleserb.github.io/game-world-painter/), open your map and turn on **AI Agent** in the header. The LED is amber while the app waits for the
    server, green when an agent is connected, and pulses while the agent works. Click it for the same setup per agent,
    the skill, the activity log and the settings.
-4. Optional, recommended: the skill, which teaches agents the workflow —
-   `gh skill install aleserb/game-world-painter game-world-painter`, or copy
-   [`skills/game-world-painter`](../skills/game-world-painter) into `~/.claude/skills/`, `~/.copilot/skills/`,
-   `~/.codex/skills/` or a repository's `.github/skills/`.
-
-Later the server will be on npm: `npx -y game-world-painter-mcp` instead of `node /path/to/…/server.mjs`.
+3. Optional, recommended: the skill, which teaches agents the workflow —
+   `gh skill install aleserb/game-world-painter game-world-painter`, download it from the app (AI Agent → Skill), or copy
+   [`skills/game-world-painter`](https://github.com/aleserb/game-world-painter/tree/main/skills/game-world-painter) into `~/.claude/skills/`, `~/.copilot/skills/`,
+   `~/.codex/skills/` or a repository's `.github/skills/`. The server also offers it as the MCP resource `gwp://skill`.
 
 ## What the agent can do
 
@@ -74,9 +78,9 @@ lasso, polygon, same kind) and areas — so "these" and "here" mean something.
 
 Most tools take a **region**: `{"area":"selection"}`, `{"items":"selection"}`, `{"zone":"village"}`, `{"layer":"trees","min":50}`,
 `{"near":"roads","distance":8}`, `{"rect":[x0,z0,x1,z1]}`, `{"slope":{"max":25}}`, … combined with
-`{"all":[…]}`, `{"any":[…]}`, `{"not":…}` — see [the skill's reference](../skills/game-world-painter/references/regions.md).
+`{"all":[…]}`, `{"any":[…]}`, `{"not":…}` — see [the skill's reference](https://github.com/aleserb/game-world-painter/blob/main/skills/game-world-painter/references/regions.md).
 
-The server also offers the skill and the [project format](../docs/project-format.md) as MCP resources
+The server also offers the skill and the [project format](https://github.com/aleserb/game-world-painter/blob/main/docs/project-format.md) as MCP resources
 (`gwp://skill`, `gwp://project-format`).
 
 ## How it works
@@ -133,8 +137,8 @@ The server also offers the skill and the [project format](../docs/project-format
 ## Options
 
 ```
-node server.mjs [--port 38765] [--http | --stdio] [--allow-origin <origin>]… [--timeout 120] [--quiet]
-node server.mjs setup        print the setup for each agent
+npx -y game-world-painter-mcp [--port 38765] [--http | --stdio] [--allow-origin <origin>]… [--timeout 120] [--quiet]
+npx -y game-world-painter-mcp setup        print the setup for each agent
 ```
 
 | Option | |
@@ -154,18 +158,24 @@ Environment: `GWP_MCP_PORT` (the port), `GWP_PROJECT_DIRS` (folders to search fo
 ## Troubleshooting
 
 - **The LED stays amber**: no server at the app's URL. Agents start it when they start; check that the agent lists
-  the server (`/mcp` in Claude Code and Copilot CLI) or run `node mcp/server.mjs` in a terminal.
+  the server (`/mcp` in Claude Code and Copilot CLI) or run `npx -y game-world-painter-mcp` in a terminal.
 - **Chrome asks to “access other apps and services on this device”** (Local Network Access): allow it — the page
   talks to the server on this computer.
 - **“GameWorld Painter is not connected”** in the agent: turn on AI Agent in the app and keep the tab open.
 - **Port in use** by another program: `--port 38766` in the agent's command and the same port in the app.
 - **A page opened from the disk** (`file://`): start the server with `--allow-origin null`, or serve the app over HTTP.
+- **An old version keeps starting**: `npx` caches packages; `npx -y game-world-painter-mcp@latest` (or pin a version,
+  e.g. `game-world-painter-mcp@0.2.0`) in the agent's command.
 
 ## Development
 
 ```
-node --test mcp/test/*.test.mjs     the protocol, the bridge (with a fake app), origins, relays, HTTP, the folder search
+node --test mcp/test/*.test.mjs     the protocol, the bridge (with a fake app), origins, relays, HTTP, the folder search, the package
 node tests/agent.mjs                the app in headless Chrome + the server + every tool (Node 22+, Chrome)
 ```
 
-The tools are declared in [`lib/tools.mjs`](lib/tools.mjs) and implemented in the app (`js/agent-*.js`).
+The tools are declared in [`lib/tools.mjs`](https://github.com/aleserb/game-world-painter/blob/main/mcp/lib/tools.mjs) and implemented in the app (`js/agent-*.js`).
+The package bundles the skill, the project format and the license when it is packed (`scripts/bundle.mjs`).
+
+**Releasing**: set the version in `mcp/package.json` (and the changelog), then push a tag `v<version>` — the
+`npm` workflow tests the package and publishes it to npm with provenance (trusted publishing).

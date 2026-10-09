@@ -18,12 +18,16 @@ import { Hub, AppNotConnected, DEFAULT_PORT, DEFAULT_ORIGINS } from './lib/hub.m
 const here = p => fileURLToPath(new URL(p, import.meta.url));
 const pkg = JSON.parse(readFileSync(here('./package.json'), 'utf8'));
 const SCRIPT = fileURLToPath(import.meta.url);
+// npx -y game-world-painter-mcp: how agents start it (the npm package); a clone of the repository runs server.mjs
+const NPX = ['npx', '-y', pkg.name];
+const FROM_NPM = SCRIPT.split(/[\\/]/).includes('node_modules');
+const RUN = FROM_NPM ? NPX.join(' ') : `node ${SCRIPT}`;
 
 const HELP = `GameWorld Painter MCP server ${pkg.version}
 
 Agents start it themselves (stdio): add it to your agent once, then turn on AI Agent in the app.
-  node ${SCRIPT}                 run for an agent (stdio), or alone in a terminal (HTTP)
-  node ${SCRIPT} setup           print the commands to add it to Claude Code, Codex, Copilot, VS Code...
+  ${RUN}           run for an agent (stdio), or alone in a terminal (HTTP)
+  ${RUN} setup     print the commands to add it to Claude Code, Codex, Copilot, VS Code...
 
 Options:
   --port <n>            the port the app and other agents meet at (default ${DEFAULT_PORT}, env GWP_MCP_PORT)
@@ -85,7 +89,7 @@ const hubOptions = {
   port: opts.port, host: opts.host, version: pkg.version, api: API_VERSION, log, slowTools: SLOW_TOOLS,
   allowOrigins: [...DEFAULT_ORIGINS, ...opts.origins], timeoutMs: opts.timeout * 1000,
   waitAppMs: process.env.GWP_MCP_WAIT_APP_MS != null ? +process.env.GWP_MCP_WAIT_APP_MS : 4000, // a reloading page reconnects
-  command: { node: process.execPath, script: SCRIPT },
+  command: { node: process.execPath, script: SCRIPT, npm: FROM_NPM, npx: NPX.join(' ') },
   mcp: { ...mcpOptions, callTool: (name, args, ctx) => callTool(name, args, ctx) },
 };
 
@@ -334,14 +338,15 @@ if (mode === 'http') {
 
 function printSetup() {
   const q = s => (/[\s"']/.test(s) ? JSON.stringify(s) : s);
-  const cmd = `node ${q(SCRIPT)}`;
-  const json = (key, extra = {}) => JSON.stringify({ [key]: { 'game-world-painter': { ...extra, command: 'node', args: [SCRIPT] } } }, null, 2);
-  console.log(`GameWorld Painter MCP server ${pkg.version}: add it to your agent (it starts the server by itself).
+  const port = opts.port !== DEFAULT_PORT ? ['--port', String(opts.port)] : [];
+  const [command, ...args] = [...NPX, ...port], cmd = [command, ...args].map(q).join(' ');
+  const json = (key, extra = {}) => JSON.stringify({ [key]: { 'game-world-painter': { ...extra, command, args } } }, null, 2);
+  console.log(`GameWorld Painter MCP server ${pkg.version}: add it to your agent (it starts the server by itself, Node.js 18+).
 
-Claude Code:      claude mcp add --scope user game-world-painter -- ${cmd}
-Codex:            codex mcp add game-world-painter -- ${cmd}
+Claude Code:        claude mcp add --scope user game-world-painter -- ${cmd}
+Codex:              codex mcp add game-world-painter -- ${cmd}
 GitHub Copilot CLI: copilot mcp add game-world-painter -- ${cmd}
-Gemini CLI:       gemini mcp add --scope user game-world-painter node ${q(SCRIPT)}
+Gemini CLI:         gemini mcp add --scope user game-world-painter -- ${cmd}
 
 VS Code (.vscode/mcp.json, or "MCP: Add Server"):
 ${json('servers', { type: 'stdio' })}
@@ -349,8 +354,15 @@ ${json('servers', { type: 'stdio' })}
 Cursor (~/.cursor/mcp.json), Claude Desktop, Windsurf and others ("mcpServers"):
 ${json('mcpServers')}
 
-Clients configured by URL: run "${cmd} --http" and use http://127.0.0.1:${opts.port}/mcp
+Codex (~/.codex/config.toml):
+[mcp_servers.game-world-painter]
+command = "${command}"
+args = ${JSON.stringify(args)}
 
+On Windows, if a client cannot start npx: command "cmd", args ["/c", "npx", "-y", "${pkg.name}"].
+Clients configured by URL: run "${cmd} --http" and use http://127.0.0.1:${opts.port}/mcp
+${FROM_NPM ? '' : `From this clone of the repository instead of npx: node ${q(SCRIPT)}${port.length ? ' ' + port.join(' ') : ''}
+`}
 Then open GameWorld Painter, open your map and turn on AI Agent in the header.
 The agent skill (how to use the tools well): gh skill install aleserb/game-world-painter game-world-painter
 (or copy skills/game-world-painter to ~/.claude/skills, ~/.copilot/skills, ~/.codex/skills or .github/skills).`);
