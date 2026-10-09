@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 — 2026-10-09
 
 - Long sessions with an AI agent no longer grow memory: the Activity keeps the latest 1000 calls and draws them 200
   at a time ("Show older"); decided proposals and finished changes let go of their undo snapshots, map marks and
