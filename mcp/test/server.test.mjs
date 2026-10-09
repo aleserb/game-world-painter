@@ -1,7 +1,7 @@
 // The MCP server without the app: protocol (legacy and modern), the bridge to a fake app, origins, relays, HTTP.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startStdio, initialize, freePort, fakeApp, req, sleep, makeProject } from './helpers.mjs';
+import { startStdio, initialize, freePort, fakeApp, req, sleep, makeProject, listening } from './helpers.mjs';
 import { TOOLS } from '../lib/tools.mjs';
 
 const META = v => ({ 'io.modelcontextprotocol/protocolVersion': v, 'io.modelcontextprotocol/clientInfo': { name: 'modern-client', version: '2.0' }, 'io.modelcontextprotocol/clientCapabilities': {} });
@@ -68,7 +68,7 @@ test('tool calls run in the app; images and errors come back', async () => {
   const c = startStdio(port);
   try {
     await initialize(c);
-    await sleep(200);
+    await listening(port);
     const app = fakeApp(port, (tool, args) => {
       if (tool === 'render_map') return { text: 'a map', images: [{ data: 'iVBORw0KGgo=', mimeType: 'image/png' }] };
       if (tool === 'paint_layer') throw new Error('The layer "trees" is locked');
@@ -96,7 +96,7 @@ test('only allowed origins and loopback hosts', async () => {
   const port = await freePort();
   const c = startStdio(port);
   try {
-    await sleep(300);
+    await listening(port);
     assert.equal((await req(port, 'GET', '/status', { headers: { Origin: 'https://evil.example' } })).status, 403);
     assert.equal((await req(port, 'GET', '/status', { headers: { Host: 'evil.example' } })).status, 403);
     const ok = await req(port, 'GET', '/status', { headers: { Origin: 'https://aleserb.github.io' } });
@@ -116,7 +116,7 @@ test('a second agent relays through the first; it takes over when the first exit
   try {
     await initialize(a, '2025-06-18', 'agent-a');
     await initialize(b, '2025-06-18', 'agent-b');
-    await sleep(400);
+    await listening(port);
     const app = fakeApp(port, tool => ({ data: { ran: tool } }));
     await app.ready;
     const r = await b.request('tools/call', { name: 'get_user_context', arguments: {} });
@@ -127,6 +127,7 @@ test('a second agent relays through the first; it takes over when the first exit
     await a.kill(); // the hub goes away: b takes the port (at its next hello or call); the app reconnects there
     const first = await b.request('tools/call', { name: 'get_map_info', arguments: {} });
     assert.match(first.result.content[0].text, /not connected/, 'b runs the hub now, without an app yet');
+    await listening(port);
     const app2 = fakeApp(port, tool => ({ data: { ran: tool, again: true } }));
     await app2.ready;
     const r2 = await b.request('tools/call', { name: 'get_map_info', arguments: {} });
@@ -139,7 +140,7 @@ test('Streamable HTTP: legacy sessions and modern stateless requests', async () 
   const port = await freePort();
   const c = startStdio(port);
   try {
-    await sleep(300);
+    await listening(port);
     const accept = { Accept: 'application/json, text/event-stream' };
     const init = await req(port, 'POST', '/mcp', { headers: accept, body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'http-client', version: '1' } } } });
     assert.equal(init.status, 200);
@@ -176,7 +177,7 @@ test('get_project_path: the folder found through the client\'s roots, its workin
   const c = startStdio(port, [], {}, { cwd: empty, onRequest: m => (m === 'roots/list' ? (asked++, { roots: [{ uri: `file://${ws}`, name: 'game' }] }) : undefined) });
   try {
     await initialize(c, '2025-06-18', 'roots-agent', { roots: { listChanged: true } });
-    await sleep(200);
+    await listening(port);
     let remembered = null, hints = [];
     const app = fakeApp(port, (tool, args) => {
       if (tool === '_project_folder') return { data: { ...info, hints } };
@@ -205,7 +206,7 @@ test('get_project_path: the folder found through the client\'s roots, its workin
   const c2 = startStdio(port2, [], {}, { cwd: ws });
   try {
     await initialize(c2);
-    await sleep(200);
+    await listening(port2);
     const app = fakeApp(port2, tool => (tool === '_project_folder' ? { data: info } : { data: { ok: true } }));
     await app.ready;
     const d = JSON.parse((await c2.request('tools/call', { name: 'get_project_path', arguments: {} })).result.content[0].text);

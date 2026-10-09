@@ -87,8 +87,15 @@ const agentId = randomUUID();
 let localClient = null;
 let helloTimer = null;
 
-/** Owns the port, or relays to the process that does; with takeover when that one exits. */
-async function startRole() {
+/** Owns the port, or relays to the process that does; with takeover when that one exits. One attempt at a time
+ *  (a tool call and the hello timer may both try to take over). */
+let starting = null;
+function startRole() {
+  if (role === 'hub') return Promise.resolve(true);
+  return (starting ||= startRoleOnce().finally(() => { starting = null; }));
+}
+
+async function startRoleOnce() {
   const h = new Hub(hubOptions);
   try {
     await h.listen();

@@ -116,6 +116,14 @@ export function fakeApp(port, handler, origin = 'http://localhost:8000') {
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/** Waits until a GameWorld Painter MCP server answers on the port (a slow machine starts it later). */
+export async function listening(port, ms = 10000) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(100)) {
+    try { if ((await req(port, 'GET', '/status')).json?.name === 'game-world-painter-mcp') return true; } catch { /* not yet */ }
+  }
+  throw new Error(`nothing answers on port ${port}`);
+}
+
 /** A project folder: metadata.json and a layer file; returns what the app would send about it. */
 export function makeProject(dir, meta = '{"version":3,"title":"Test"}', layer = 'abc') {
   fs.mkdirSync(path.join(dir, 'layers'), { recursive: true });
