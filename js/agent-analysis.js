@@ -84,7 +84,7 @@ function walkGrid(g, args, r) {
   const H = heightLayer(null, false), maxSlope = args.max_slope ?? 35;
   const block = blockingMask(g, args.blocking);
   const s = H ? slopeField(g, H) : null, walk = new Uint8Array(g.N * g.R);
-  for (let i = 0; i < walk.length; i++) walk[i] = r.m[i] && !block.m[i] && (!s || s[i] <= maxSlope) ? 1 : 0;
+  for (let i = 0; i < walk.length; i++) walk[i] = r.m[i] && !block.m[i] && (!s || s[i] <= maxSlope || block.pass?.[i]) ? 1 : 0;
   return { walk, block, s, maxSlope, H };
 }
 

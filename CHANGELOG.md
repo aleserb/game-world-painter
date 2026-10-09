@@ -24,6 +24,17 @@
   double-click the head: back to the corner). The Activity shows the comments.
 - Opening another map while a proposal waits undoes it (it is not saved into the old map); `open_map` and
   `create_map` wait for a running autosave before saving the open map.
+- The agent checks its changes before the user sees them: `check_change` gives BEFORE / AFTER images of the place
+  (its objects outlined and labeled, problems in red), what changed per layer, and checks of every placed object —
+  overlaps, water, roads, uneven ground, bridges (ends on dry land, over the water, the angle to the flow). Changing
+  calls return the checks; `end_change` stays open while problems are left (`ignore_problems` with a reason); in review
+  mode a single call with problems is not shown for review. The card shows the self-check.
+- `find_crossing`: the narrowest places to cross water, with the bank points for a bridge straight across the flow.
+- Objects can be placed by their two ends (`a`, `b`: center, yaw and length follow) or `towards` a point; the yaw rule
+  is spelled out; `get_map_info` gives the usual size of each kind.
+- Walking: bridges and other crossings are walkable; the zones layer no longer blocks (a zone named `river_valley`
+  was taken for water).
+- Help: the two columns are balanced.
 - Select area on layers of objects, notes and paths: rectangle, ellipse, lasso and polygon select the items in the
   shape (and the area), the magic wand selects the same kind; Shift adds, Alt subtracts, Ctrl+I inverts. The agent
   gets the selection (`get_user_context`: kinds and ids; the region `{"items":"selection"}`).

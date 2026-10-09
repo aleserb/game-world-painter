@@ -20,6 +20,13 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
   - **notes**: pinned text;
   - **vector**: paths (roads, rivers, borders) as `points` `[x, z]` or `[x, z, width]`, smooth or straight, `closed` paths are areas.
 - **Coordinates**: x grows east, z grows south (north is up). Lengths are in the map's unit (meters unless `get_map_info` says otherwise): scale your numbers to it.
+- **Placing an object**, three ways — pick the one that fits, do not compute angles by hand:
+  - its center `x`, `z` and `yaw` (degrees, counter-clockwise seen from above: its length `w` points along
+    (cos yaw, −sin yaw) — 0 east, 90 north, −90 south);
+  - its two ends `a` and `b` — center, yaw and (footprints) length follow; `d` is its width. For bridges, walls,
+    fences, docks: anything that goes from one point to another;
+  - `x`, `z` and `towards` a point — its length points there.
+  Use the usual size of the kind (`get_map_info` → `kind_sizes`): a new house as big as the houses already there.
 - **Zones** are classes of a categories layer named zones. **The selected area** is what the user selected in the app.
 - **The user's selection** shows what they mean: they select objects with a click, a box, or the Select area tools
   (rectangle, ellipse, lasso, polygon, same kind). `get_user_context` gives the selected items (layer, kinds, ids) and
@@ -47,8 +54,15 @@ change at once and can undo it (Ctrl+Z; each tool call is one step named "AI: �
    Give every changing call a `comment` for the user — what it does and why, in a sentence or two; the app shows it with
    the change. When one idea takes several calls, wrap them: `begin_change` (a clear title and description) → the calls
    → `end_change` (a short summary). The user sees one change (one undo step, or one proposal in review mode).
-5. **Check.** `describe_region` / `analyze_items` / `render_map` again: counts, spacing, coverage, nothing on roads or water.
-   Fix what is off (`undo` your last step if it went wrong).
+5. **See and check before the user does.** Every changing call returns `checks` when something looks wrong with the
+   objects it placed. Before `end_change`, call `check_change`: two images of the place, BEFORE and AFTER, with your
+   objects outlined and labeled (problems in red; bridges with a line from end a to b), what changed per layer, and the
+   checks — overlaps, objects in water or on roads, uneven ground (with the flatten call), bridges (both ends on dry
+   land, crossing the water, about 90° to the flow). **Look at the images** and ask: is it what the user asked for, where
+   they asked? Fix what is off (`update_items` with `move` or new `a`/`b`, `delete_items`), then check again.
+   `end_change` runs the same checks and does not finish while problems are left; give `ignore_problems` with the
+   reason only when the "problem" is intended (the user sees it). For counts, spacing and coverage use
+   `describe_region` / `analyze_items`.
 6. **Files on disk, when tools are not enough.** `get_project_path` gives the folder of the map on this computer and
    every layer file (PNG, JSON) — for scripts, image tools, converting or exporting. Check `unsaved_in_app` first
    (ask the user to save, or wait for autosave); to write files, create `edit.lock`, write whole files, then delete it:
@@ -64,7 +78,11 @@ reviews on the map:
   saved), `changes_requested` (undone; read `feedback` and make a new proposal that follows it), `rejected` (undone;
   do not repeat it), or `pending` (call `wait_for_review` until decided).
 - Group the steps of one idea into one proposal: `begin_change` (a clear title and why) → the changes (each with a
-  `comment`) → `end_change` (a short summary; it waits for the decision). Keep proposals small enough to judge at a glance.
+  `comment`) → `check_change` → `end_change` (a short summary; it waits for the decision). Keep proposals small enough
+  to judge at a glance.
+- A single changing call whose objects have problems is not shown for review: it stays open as a change for you to fix,
+  then `end_change`.
+- When the user asks for changes, read the feedback literally and fix exactly that; check again before you submit.
 - Titles, descriptions, summaries and comments are shown as written: lines, `- ` lists, `**bold**` and `` `code` ``.
 - While a proposal waits, make no other changes; reading and looking are fine. `undo` withdraws your proposal.
 - `get_user_context` → `your_recent_changes` tells what became of your latest changes (e.g. the user undid one).

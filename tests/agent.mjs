@@ -42,7 +42,7 @@ try {
   const tools = (await mcp.request('tools/list', {})).result.tools.map(t => t.name);
   const inApp = tools.filter(t => !SERVER_TOOLS.has(t));
   const missing = await ev(`${JSON.stringify(inApp)}.filter(t => typeof ME.agentTools[t] !== 'function')`);
-  check(missing.length === 0 && tools.length === 26, 'every MCP tool runs in the app (or the server)', missing.join(', '));
+  check(missing.length === 0 && tools.length === 28, 'every MCP tool runs in the app (or the server)', missing.join(', '));
 
   // looking
   const info = await call('get_map_info');
@@ -209,6 +209,54 @@ try {
   const e2 = await call('end_change', {});
   check(empty.data?.status === 'open' && e2.data?.change?.status === 'empty', 'a change with nothing in it closes', JSON.stringify(e2.data || e2.error));
 
+  // a bridge and a hut: find_crossing gives the bank points, objects go by their ends, the agent sees and checks its change
+  const fc = await call('find_crossing', { region: { circle: [-84, 21, 10] } });
+  const cr = fc.data?.crossings?.[0];
+  check(cr && cr.angle_to_flow_deg >= 80 && cr.ends.a.dry && cr.ends.b.dry && cr.water_width >= 2 && cr.water_width <= 8 && fc.data.water_layers.includes('rivers'),
+    'find_crossing: bank points straight across the river', fc.error || JSON.stringify(cr));
+  const has = (r, c) => (r.data?.checks?.problems || r.data?.problems || []).some(p => p.check === c);
+  await call('begin_change', { title: 'A bridge and a hut' });
+  const wrong = await call('add_items', { layer: 'buildings', items: [{ kind: 'stone_bridge', x: cr.center[0], z: cr.center[1], yaw: cr.yaw + 90, w: 10, d: 3 }] });
+  const hut = await call('add_items', { layer: 'buildings', items: [{ kind: 'hut', x: cr.center[0] + 2, z: cr.center[1] + 1, w: 8, d: 6 }] });
+  check(has(wrong, 'along_the_water') && has(wrong, 'end_in_water') && has(hut, 'overlap') && has(hut, 'in_water'), 'a call reports what is wrong with its objects (a bridge along the river, a hut on it and in the water)',
+    JSON.stringify([wrong.data?.checks, hut.data?.checks]).slice(0, 300));
+  const seen = await call('check_change');
+  check(seen.images.length === 2 && seen.images.every(i => i.data.length > 3000) && seen.data?.problems?.length >= 3 && seen.data.layers.buildings?.added_count === 2 && /BEFORE.*AFTER/.test(seen.text),
+    'check_change: BEFORE and AFTER images, what changed, the problems', seen.error || JSON.stringify(seen.data?.layers));
+  const notDone = await call('end_change', { summary: 'x' });
+  check(notDone.data?.change?.status === 'open' && notDone.data.problems.length >= 3 && (await ev(`!!document.querySelector('#ai-proposal .check.bad')`)), 'end_change does not finish while problems are left (the card says so)', JSON.stringify(notDone.data?.change));
+  const bridgeId = wrong.data.ids[0], hutId = hut.data.ids[0];
+  await call('update_items', { layer: 'buildings', items: [{ id: bridgeId, a: cr.a, b: cr.b, d: 3 }, { id: hutId, move: [0, -14] }] });
+  const placed = await ev(`gwp.layerById('buildings').items.find(i => i.id === ${bridgeId})`);
+  const expYaw = Math.atan2(-(cr.b[1] - cr.a[1]), cr.b[0] - cr.a[0]) * 180 / Math.PI, expLen = Math.hypot(cr.b[0] - cr.a[0], cr.b[1] - cr.a[1]);
+  check(Math.abs(placed.x - (cr.a[0] + cr.b[0]) / 2) < 0.02 && Math.abs(placed.z - (cr.a[1] + cr.b[1]) / 2) < 0.02 && Math.abs(placed.w - expLen) < 0.05 && Math.abs(placed.yaw - expYaw) < 0.1 && placed.d === 3,
+    'an object placed by its ends a and b: center, yaw and length follow', JSON.stringify(placed));
+  const fixed = await call('end_change', { summary: 'A bridge straight across, the hut north of it' });
+  check(fixed.data?.change?.status === 'done' && fixed.data.checks?.problems === 0 && (await ev(`!!document.querySelector('#ai-proposal .check.ok, #ai-proposal .check.warn')`)),
+    'fixed: end_change finishes, the card shows the self-check', JSON.stringify(fixed.data || fixed.error).slice(0, 200));
+  const over = await call('find_route', { from: { point: cr.a }, to: { point: cr.b } });
+  check(over.data?.found && over.data.length <= 1.5 * cr.length + 1, 'a route crosses the river over the bridge', JSON.stringify(over.data || over.error).slice(0, 200));
+  const placedNow = await call('check_change', { items: { layer: 'buildings', ids: [bridgeId, hutId] } });
+  check(placedNow.data?.checked_objects?.length === 2 && placedNow.data.ok && placedNow.images.length === 1, 'check_change of objects on the map', JSON.stringify(placedNow.data?.problems));
+  const sizes = (await call('get_map_info')).data?.layers_top_to_bottom?.find(l => l.id === 'buildings')?.kind_sizes;
+  check(sizes?.house === '8 × 6', 'get_map_info: the usual size of each kind', JSON.stringify(sizes));
+  await ev('gwp.undo(); true'); // the bridge and the hut, one step
+  // a problem the agent means: ignore_problems with a reason (the user sees it)
+  await call('begin_change', { title: 'A shed in the yard' });
+  await call('add_items', { layer: 'buildings', items: [{ kind: 'shed', x: -2, z: 10, w: 3, d: 3 }] });
+  const ign = await call('end_change', { ignore_problems: 'The shed stands inside the house on purpose: a cellar entrance' });
+  check(ign.data?.change?.status === 'done' && ign.data.checks?.ignored && /cellar/.test(await ev(`document.querySelector('#ai-proposal .check')?.textContent || ''`)), 'ignore_problems: finished, the reason on the card', JSON.stringify(ign.data || ign.error).slice(0, 200));
+  await ev('gwp.undo(); true');
+  // towards: the length points at a point (north: yaw 90)
+  const tw = await call('add_items', { layer: 'chests', items: [{ kind: 'crate', x: 0, z: 0, towards: [0, -10] }] });
+  check((await ev(`gwp.layerById('chests').items.find(i => i.id === ${tw.data?.ids?.[0]})?.yaw`)) === 90, 'an object pointed "towards" a point');
+  await ev('gwp.undo(); true');
+  // the zones are areas, not obstacles: a class "river_valley" does not block walking
+  await call('update_layer', { layer: 'zones', add_classes: [{ name: 'river_valley', color: '#3a6a8a' }] });
+  const wk = await call('analyze_walkability', { region: { circle: [0, 25, 10] } });
+  check(wk.data && !wk.data.blocking_layers.some(l => l.startsWith('zones')), 'the zones do not block walking', JSON.stringify(wk.data?.blocking_layers));
+  await call('undo');
+
   // errors are explained to the agent
   const locked = await ev(`(gwp.layerById('water').meta.locked = true, true)`);
   const lk = await call('paint_layer', { layer: 'water', region: { circle: [0, 0, 5] }, value: 100 });
@@ -282,6 +330,10 @@ try {
   check(r4.data?.proposal?.status === 'pending' && /waiting for the user's review/.test(blocked.error || '') && r5.data?.proposal?.status === 'accepted',
     'review: pending, then wait_for_review; no new changes meanwhile', `${r4.data?.proposal?.status} | ${blocked.error} | ${r5.data?.proposal?.status}`);
   check((await ev('gwp.history.undo.at(-1).label')) === 'AI: Later', 'review: an accepted proposal is one undo step', await ev('gwp.history.undo.at(-1).label'));
+  // a single change with problems is not shown for review: it stays open for the agent to fix
+  const bad1 = await call('add_items', { layer: 'buildings', items: [{ kind: 'shed', x: -2, z: 10, w: 3, d: 3 }] });
+  check(bad1.data?.proposal?.status === 'open' && has(bad1, 'overlap') && (await ev(`(${card})?.status`)) === 'open', 'review: a change with problems stays open (not shown for review)', JSON.stringify(bad1.data?.proposal || bad1.error));
+  await call('undo');
   // the agent withdraws its open proposal
   await call('begin_change', { title: 'Oops' });
   await call('add_items', { layer: 'notes', items: [{ x: 3, z: 3, text: 'oops' }] });

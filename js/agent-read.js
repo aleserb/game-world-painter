@@ -58,6 +58,17 @@ function layerFacts(g, L) {
       if (keys.size) o.prop_keys = [...keys].slice(0, 40);
     }
     if (L.type === 'objects') Object.assign(o, { style: m.style, ...(m.style !== 'footprint' ? { marker_size: m.size } : {}), ...(m.label ? { label: m.label } : {}) });
+    if (L.type === 'objects') { // the usual size of each kind (the median): new ones of a kind should match
+      const by = {};
+      for (const it of L.items) {
+        const len = it.a && it.b ? Math.hypot(it.b[0] - it.a[0], it.b[1] - it.a[1]) : null;
+        if (it.w == null && len == null) continue;
+        (by[it.kind] ||= []).push(it.w != null ? [it.w, it.d ?? it.w] : [len]);
+      }
+      const med = v => { const q = [...v].sort((a, b) => a - b); return q[q.length >> 1]; };
+      const sizes = Object.entries(by).slice(0, 40).map(([k, v]) => [k, v[0].length === 2 ? `${fmtU(g, med(v.map(x => x[0])))} × ${fmtU(g, med(v.map(x => x[1])))}` : `${fmtU(g, med(v.map(x => x[0])))} long`]);
+      if (sizes.length) o.kind_sizes = Object.fromEntries(sizes);
+    }
     if (L.type === 'vector') Object.assign(o, { width: m.width, smooth: !!m.smooth, ...(m.dash ? { dashed: true } : {}), total_length: fmtU(g, L.items.reduce((s, it) => s + L.length(it), 0), 0) });
   }
   return o;
@@ -71,7 +82,7 @@ T.get_map_info = () => {
       unit: { id: S.project.unit || 'm', name: g.unit.name, label: g.unit.label },
       bounds: { x0: w.x0, z0: w.z0, x1: r2(w.x0 + w.width), z1: r2(w.z0 + w.height), width: w.width, height: w.height },
       cell: r2(g.c), cells: [g.N, g.R],
-      axes: 'x grows east (right), z grows south (down): north is up; yaw in degrees, positive turns counter-clockwise seen from above',
+      axes: 'x grows east (right), z grows south (down): north is up. yaw in degrees, counter-clockwise seen from above: an object\'s length (w) points along (cos yaw, −sin yaw) — yaw 0: east, 90: north, −90: south. Instead of x, z, yaw you can give its two ends "a" and "b" (a bridge from bank to bank) or "towards" a point',
       layers_top_to_bottom: [...S.layers].reverse().map(L => layerFacts(g, L)),
       zones: Z ? { layer: Z.id, names: Z.meta.classes.slice(1).map(c => c.name) } : null,
       folder: { name: A().folder?.name || null, path: S.projectPath || null, note: 'get_project_path finds the full path on disk' },
@@ -150,26 +161,35 @@ T._set_project_path = ({ path }) => {
 
 T.render_map = args => {
   const g = G(), { S } = g;
-  let bx0, bz0, bx1, bz1;
+  let box;
   if (args.region) {
     const r = region(args.region, g), [a, b, c, d] = worldBox(g, r.b), pad = Math.max(c - a, d - b) * 0.06 + g.c;
-    [bx0, bz0, bx1, bz1] = [a - pad, b - pad, c + pad, d + pad];
+    box = [a - pad, b - pad, c + pad, d + pad];
   } else {
     const v = A().view;
-    [bx0, bz0] = v.toWorld(0, 0); [bx1, bz1] = v.toWorld(v.w, v.h);
+    box = [...v.toWorld(0, 0), ...v.toWorld(v.w, v.h)];
   }
-  const W0 = bx1 - bx0, H0 = bz1 - bz0;
+  const m = mapCanvas(g, box, args);
+  if (args.highlight) m.outline(regionMask(args.highlight, g), '#ff4d4d', false);
+  m.grid();
+  return { text: m.describe() + (args.highlight ? ' Red: the highlight.' : ''), images: [m.image(args.format === 'png')] };
+};
+
+/** The map in a box [x0, z0, x1, z1] drawn on a canvas, north up: the visible layers (or opts.layers), the user's
+ *  selected area; then outline(), grid(), image(). Also used by check_change (js/agent-check.js). */
+function mapCanvas(g, [bx0, bz0, bx1, bz1], opts = {}) {
+  const { S } = g, W0 = bx1 - bx0, H0 = bz1 - bz0;
   if (!(W0 > 0 && H0 > 0)) fail('Nothing to show');
-  const size = Math.max(128, Math.min(1600, args.size || 768)), scale = size / Math.max(W0, H0);
+  const size = Math.max(128, Math.min(1600, opts.size || 768)), scale = size / Math.max(W0, H0);
   const cw = Math.round(W0 * scale), ch = Math.round(H0 * scale);
   const cv = document.createElement('canvas');
   cv.width = cw; cv.height = ch;
   const ctx = cv.getContext('2d');
   const v = new ME.View(cv, g.w);
-  Object.assign(v, { dpr: 1, w: cw, h: ch, scale, ox: (g.w.x0 - bx0) * scale, oy: (g.w.z0 - bz0) * scale, texture: args.labels === false });
+  Object.assign(v, { dpr: 1, w: cw, h: ch, scale, ox: (g.w.x0 - bx0) * scale, oy: (g.w.z0 - bz0) * scale, texture: opts.labels === false });
   ctx.fillStyle = '#141416'; ctx.fillRect(0, 0, cw, ch);
   ctx.fillStyle = '#202024'; ctx.fillRect(v.ox, v.oy, g.w.width * scale, g.w.height * scale);
-  const want = args.layers?.length ? new Set(args.layers.map(id => layerOf(id).id)) : null;
+  const want = opts.layers?.length ? new Set(opts.layers.map(id => layerOf(id).id)) : null;
   const drawn = [];
   for (const L of S.layers) {
     if (want ? !want.has(L.id) : !L.meta.visible) continue;
@@ -180,43 +200,53 @@ T.render_map = args => {
     drawn.push(L.id);
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const outline = (mask, color, dash) => {
-    const b = bounds(g, mask);
-    if (!b.count) return;
-    const path = ME.maskOutline(mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R), c = v.cellPx();
-    ctx.save();
-    v.setCellTransform(ctx);
-    ctx.lineWidth = 2.2 / c; ctx.strokeStyle = 'rgba(10,8,14,0.9)'; ctx.stroke(path);
-    ctx.lineWidth = 1.4 / c; ctx.strokeStyle = color; if (dash) ctx.setLineDash([5 / c, 4 / c]); ctx.stroke(path);
-    ctx.restore();
-  };
-  if (S.area) outline(S.area.mask, '#ffffff', true);
-  if (args.highlight) outline(regionMask(args.highlight, g), '#ff4d4d', false);
   let step = 0;
-  if (args.grid !== false) {
-    step = ME.stepAtLeast(Math.max(W0, H0) / 8);
-    ctx.font = '11px system-ui';
-    ctx.lineWidth = 1;
-    for (let n = Math.ceil(bx0 / step); n * step <= bx1; n++) {
-      const x = Math.round((n * step - bx0) * scale) + 0.5;
-      ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke();
-      label(ctx, `x ${A().fmt(n * step)}`, x + 3, 3);
-    }
-    for (let n = Math.ceil(bz0 / step); n * step <= bz1; n++) {
-      const y = Math.round((n * step - bz0) * scale) + 0.5;
-      ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke();
-      label(ctx, `z ${A().fmt(n * step)}`, 3, y + 3);
-    }
-    label(ctx, 'N ↑', cw - 34, 3);
-  }
-  const png = args.format === 'png', url = cv.toDataURL(png ? 'image/png' : 'image/jpeg', 0.86);
-  return {
-    text: `"${S.project.title}" from above, north up: x ${r2(bx0)} … ${r2(bx1)} (east), z ${r2(bz0)} … ${r2(bz1)} (south), ${r2(1 / scale)} ${g.unit.label} per pixel`
-      + `${step ? `, grid every ${step} ${g.unit.label}` : ''}. Layers drawn (bottom to top): ${drawn.join(', ') || 'none'}.`
-      + `${S.area ? ' Dashed white: the user\'s selected area.' : ''}${args.highlight ? ' Red: the highlight.' : ''}`,
-    images: [{ data: url.slice(url.indexOf(',') + 1), mimeType: png ? 'image/png' : 'image/jpeg' }],
+  const m = {
+    cv, ctx, v, scale, drawn,
+    outline(mask, color, dash) {
+      const b = bounds(g, mask);
+      if (!b.count) return;
+      const path = ME.maskOutline(mask, g.N, [b.x0, b.y0, b.x1, b.y1], g.R), c = v.cellPx();
+      ctx.save();
+      v.setCellTransform(ctx);
+      ctx.lineWidth = 2.2 / c; ctx.strokeStyle = 'rgba(10,8,14,0.9)'; ctx.stroke(path);
+      ctx.lineWidth = 1.4 / c; ctx.strokeStyle = color; if (dash) ctx.setLineDash([5 / c, 4 / c]); ctx.stroke(path);
+      ctx.restore();
+    },
+    grid() {
+      if (opts.grid === false) return;
+      step = ME.stepAtLeast(Math.max(W0, H0) / 8);
+      ctx.save();
+      ctx.font = '11px system-ui';
+      ctx.lineWidth = 1;
+      for (let n = Math.ceil(bx0 / step); n * step <= bx1; n++) {
+        const x = Math.round((n * step - bx0) * scale) + 0.5;
+        ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke();
+        const t = `x ${A().fmt(n * step)}`;
+        if (x + 3 + ctx.measureText(t).width < cw - 40) label(ctx, t, x + 3, 3); // not under the north arrow
+      }
+      for (let n = Math.ceil(bz0 / step); n * step <= bz1; n++) {
+        const y = Math.round((n * step - bz0) * scale) + 0.5;
+        ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cw, y); ctx.stroke();
+        label(ctx, `z ${A().fmt(n * step)}`, 3, y + 3);
+      }
+      label(ctx, 'N ↑', cw - 34, 3);
+      ctx.restore();
+    },
+    label: (text, x, y) => label(ctx, text, x, y),
+    image(png = false) {
+      const url = cv.toDataURL(png ? 'image/png' : 'image/jpeg', 0.86);
+      return { data: url.slice(url.indexOf(',') + 1), mimeType: png ? 'image/png' : 'image/jpeg' };
+    },
+    describe() {
+      return `"${S.project.title}" from above, north up: x ${r2(bx0)} … ${r2(bx1)} (east), z ${r2(bz0)} … ${r2(bz1)} (south), ${r2(1 / scale)} ${g.unit.label} per pixel`
+        + `${step ? `, grid every ${step} ${g.unit.label}` : ''}. Layers drawn (bottom to top): ${drawn.join(', ') || 'none'}.`
+        + `${S.area ? ' Dashed white: the user\'s selected area.' : ''}`;
+    },
   };
-};
+  if (S.area && opts.selection !== false) m.outline(S.area.mask, '#ffffff', true);
+  return m;
+}
 
 function label(ctx, text, x, y) {
   const w = ctx.measureText(text).width;
@@ -438,5 +468,5 @@ function peaks(g, r, f, limit, minSep) {
   return out;
 }
 
-ME.agentRead = { brief, each, inRegion, peaks, userContext, pct };
+ME.agentRead = { brief, each, inRegion, peaks, userContext, pct, mapCanvas, layerFacts };
 })(window.ME);

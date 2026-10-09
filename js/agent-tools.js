@@ -327,6 +327,10 @@ function components(g, m) {
 // Default layer choices, by their names: cover (trees, rocks, buildings...) and what blocks walking (water, cliffs...)
 const COVER_RE = /tree|bush|shrub|forest|wood|jungle|rock|cliff|boulder|stone|building|house|ruin|wall|fence|structure|hiding|cover|prop|crate|barrel/i;
 const BLOCK_RE = /water|lake|river|sea|ocean|pond|lava|cliff|wall/i;
+const LAND_RE = /valley|bank|side|shore|beach|bed|edge|coast|meadow|field|forest|wood|dry|ford|marsh|land|plain/i; // "river_valley" is land
+const WATER_RE = /water|lake|river|stream|creek|sea|ocean|pond|pool/i;
+/** Objects people walk over water on: bridges, fords, stepping stones... (by kind) */
+const CROSS_RE = /bridge|crossing|ford|stepping|plank|walkway|boardwalk|ferry/i;
 const nameOf = L => `${L.id} ${L.meta.name}`;
 
 function coverLayers(ids) {
@@ -334,21 +338,63 @@ function coverLayers(ids) {
   return G().S.layers.filter(L => (L.type === 'mask' || L.type === 'objects' || L.type === 'vector') && COVER_RE.test(nameOf(L)) && !/road|path|trail|water/i.test(nameOf(L)));
 }
 
-/** What blocks walking: the given layers, or water / cliff / wall masks and classes, rivers and footprint objects. */
+const isCrossing = (L, it) => CROSS_RE.test(it.kind || '') || (L.type === 'objects' && /bridge|crossing/i.test(nameOf(L)));
+const blocksClass = name => BLOCK_RE.test(name) && !LAND_RE.test(name);
+
+/** Where bridges and other crossings are (footprints, links as a 1.2 m wide strip): walkable over water. */
+function crossingMask(g) {
+  const items = [];
+  for (const L of g.S.layers) if (L.type === 'objects') for (const it of L.items) if (isCrossing(L, it)) items.push([L, it]);
+  if (!items.length) return null;
+  const { ctx, read } = cellCanvas(g), wide = Math.max(metersIn(g, 1.2), g.c);
+  for (const [L, it] of items) {
+    if (it.a && it.b && (L.meta.style === 'link' || it.w == null)) {
+      ctx.lineWidth = wide; ctx.beginPath(); ctx.moveTo(it.a[0], it.a[1]); ctx.lineTo(it.b[0], it.b[1]); ctx.stroke();
+    } else if (it.w != null || L.meta.style === 'footprint') {
+      const p = ME.footprintCorners(it, g.k);
+      ctx.beginPath(); p.forEach(([x, z], k) => (k ? ctx.lineTo(x, z) : ctx.moveTo(x, z))); ctx.closePath(); ctx.fill();
+    }
+  }
+  return read();
+}
+
+/** What blocks walking: the given layers, or water / cliff / wall masks and classes (not the zones: they are areas),
+ *  rivers and footprint objects; bridges and other crossings are walkable (pass). */
 function blockingMask(g, ids) {
   const m = new Uint8Array(g.N * g.R), used = [];
   const add = (p, name) => { for (let i = 0; i < m.length; i++) m[i] |= p[i]; used.push(name); };
+  if (ids?.length) for (const id of ids) { const L = layerOf(id); add(presence(g, L), L.id); }
+  else {
+    const Z = zonesLayer();
+    for (const L of g.S.layers) {
+      if (L.type === 'mask' && BLOCK_RE.test(nameOf(L))) add(presence(g, L), L.id);
+      else if (L.type === 'category' && L !== Z) {
+        const cls = L.meta.classes.filter((c, k) => k && blocksClass(c.name)).map(c => c.name);
+        if (cls.length) add(presence(g, L, { cls }), `${L.id}: ${cls.join(', ')}`);
+      } else if (L.type === 'vector' && BLOCK_RE.test(nameOf(L))) add(itemsMask(g, L), L.id);
+      else if (L.type === 'objects' && L.meta.style === 'footprint') add(itemsMask(g, L, L.items.filter(it => !isCrossing(L, it))), L.id);
+    }
+  }
+  const pass = crossingMask(g);
+  if (pass) { for (let i = 0; i < m.length; i++) if (pass[i]) m[i] = 0; used.push('(walkable: bridges and other crossings)'); }
+  return { m, used, pass };
+}
+
+/** Where water is: water masks (≥ 50 %), water classes (not the zones), rivers and streams (vector), or the given layers. */
+function waterMask(g, ids) {
+  const m = new Uint8Array(g.N * g.R), used = [];
+  const add = (p, name) => { for (let i = 0; i < m.length; i++) m[i] |= p[i]; used.push(name); };
   if (ids?.length) { for (const id of ids) { const L = layerOf(id); add(presence(g, L), L.id); } return { m, used }; }
+  const Z = zonesLayer(), wet = n => WATER_RE.test(n) && !LAND_RE.test(n);
   for (const L of g.S.layers) {
-    if (L.type === 'mask' && BLOCK_RE.test(nameOf(L))) add(presence(g, L), L.id);
-    else if (L.type === 'category') {
-      const cls = L.meta.classes.filter((c, k) => k && BLOCK_RE.test(c.name)).map(c => c.name);
+    if (L.type === 'mask' && wet(nameOf(L))) add(presence(g, L), L.id);
+    else if (L.type === 'category' && L !== Z) {
+      const cls = L.meta.classes.filter((c, k) => k && wet(c.name)).map(c => c.name);
       if (cls.length) add(presence(g, L, { cls }), `${L.id}: ${cls.join(', ')}`);
-    } else if (L.type === 'vector' && BLOCK_RE.test(nameOf(L))) add(itemsMask(g, L), L.id);
-    else if (L.type === 'objects' && L.meta.style === 'footprint') add(itemsMask(g, L), L.id);
+    } else if (L.type === 'vector' && /river|stream|creek|canal|water/i.test(nameOf(L))) add(itemsMask(g, L), L.id);
   }
   return { m, used };
 }
 
-ME.agentInternals = { G, fail, ToolError, regionMask, region, presence, itemsMask, distanceField, slopeField, blur, noiseFn, rng, components, bounds, worldBox, cellOf, cellX, cellZ, layerOf, editable, itemLayers, heightLayer, zonesLayer, classIndex, coverLayers, blockingMask, metersIn, fmtU, r2, num, pt, A, any };
+ME.agentInternals = { G, fail, ToolError, regionMask, region, presence, itemsMask, distanceField, slopeField, blur, noiseFn, rng, components, bounds, worldBox, cellOf, cellX, cellZ, layerOf, editable, itemLayers, heightLayer, zonesLayer, classIndex, coverLayers, blockingMask, waterMask, isCrossing, nameOf, cellCanvas, metersIn, fmtU, r2, num, pt, A, any };
 })(window.ME);

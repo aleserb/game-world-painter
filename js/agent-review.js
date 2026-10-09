@@ -78,19 +78,33 @@ R.run = async (call, exec, { review = true, comment = '' } = {}) => {
   if (A().S.metaVersion !== mv) P.meta = true;
   const changed = collect.map(label).filter(Boolean);
   P.results.push(result.data);
+  const checks = collect.length ? ME.agentCheck?.steps(collect) : null; // this call's objects
   if (single) {
     if (!collect.length) { discard(P); return { result }; } // nothing changed (e.g. nothing to place)
     P.title = changed.join('; ');
     P.description = comment;
     P.changes = changed.map(l => ({ label: l }));
+    if (checks?.problems.length) { // not shown to the user like this: the agent fixes it first (an open change)
+      P.single = false;
+      P.check = { problems: checks.problems.length, warnings: checks.warnings.length };
+      render();
+      return { result: withChecks(withDecision(result, { id: P.id, status: 'open', note: `Your change has problems, so it was not shown to the user for review: it is open as change #${P.id}. Fix them (update_items, delete_items…; check_change shows images), then call end_change — or end_change with "ignore_problems": "<why they are fine>".` }, 'proposal'), checks) };
+    }
+    P.check = checks ? { problems: 0, warnings: checks.warnings.length } : null;
     submit(P);
-    return { result, later: R.decision(P, DEFAULT_WAIT).then(d => withDecision(result, d, 'proposal')) };
+    return { result, later: R.decision(P, DEFAULT_WAIT).then(d => withChecks(withDecision(result, d, 'proposal'), checks)) };
   }
   if (changed.length) P.changes.push(...changed.map((l, k) => ({ label: l, comment: k === changed.length - 1 ? comment : '' })));
   else if (comment) P.changes.push({ label: call.tool.replace(/_/g, ' ') + ': nothing changed', comment });
   render();
-  return { result: withDecision(result, { id: P.id, status: 'open', note: `Part of your open ${what(P)}: call end_change when it is complete.` }, what(P)) };
+  return { result: withChecks(withDecision(result, { id: P.id, status: 'open', note: `Part of your open ${what(P)}: call end_change when it is complete.` }, what(P)), checks) };
 };
+
+/** The checks of the objects a call placed, in its result (only when there is something to say). */
+function withChecks(result, checks) {
+  if (!checks || (!checks.problems?.length && !checks.warnings?.length)) return result;
+  return { ...result, data: { ...result.data, checks: { problems: checks.problems, warnings: checks.warnings, ok: !checks.problems.length } } };
+}
 
 /** A change without review mode and outside begin_change … end_change: it applies; with a comment the card shows it. */
 async function direct(call, exec, comment) {
@@ -98,13 +112,15 @@ async function direct(call, exec, comment) {
   ME.agentCollect = collect;
   let result;
   try { result = await exec(); } finally { ME.agentCollect = null; }
+  const checks = collect.length ? ME.agentCheck?.steps(collect) : null;
   if (comment && collect.length) {
     const P = create(collect.map(label).filter(Boolean).join('; '), call.client, true, false, false);
     P.description = comment;
     P.entries = collect;
+    if (checks) P.check = { problems: checks.problems.length, warnings: checks.warnings.length };
     finishDirect(P);
   }
-  return { result };
+  return { result: withChecks(result, checks) };
 }
 
 function withDecision(result, d, key) {
@@ -324,17 +340,30 @@ T.end_change = (args, ctx) => {
   }
   if (args.title) P.title = clip(args.title, 120);
   if (args.summary) P.description = clip(args.summary, 4000);
+  // the agent's self-check: the objects of the change (overlaps, water, bridges...) before the user sees it
+  const checks = P.entries.length ? ME.agentCheck?.change(P) : null, ignored = clip(args.ignore_problems, 1000);
+  if (checks) P.check = { problems: checks.problems.length, warnings: checks.warnings.length, ignored };
+  if (checks?.problems.length && !ignored) {
+    render();
+    return {
+      data: {
+        change: { id: P.id, status: 'open' }, problems: checks.problems, warnings: checks.warnings,
+        note: `Not finished${P.review ? ' and not shown to the user' : ''}: the change has problems. Fix them (update_items with "move" or new "a"/"b", delete_items…; check_change shows before / after images) and call end_change again — or call end_change with "ignore_problems": "<why they are fine>" (the user sees your reason).`,
+      },
+    };
+  }
+  const checked = checks ? { problems: checks.problems.length, warnings: checks.warnings, ...(ignored ? { ignored } : {}) } : undefined;
   if (!P.review) {
     if (!P.entries.some(e => A().history.undo.includes(e))) {
       discard(P);
       return { data: { change: { id: P.id, status: 'empty' }, note: 'Nothing on the map changed: the change was closed.' } };
     }
     finishDirect(P);
-    return { data: { change: { id: P.id, status: 'done', changes: P.changes.map(c => c.label), undo_steps: P.entries.length }, note: 'Applied. The user sees your title and summary, and can undo it in one step.' } };
+    return { data: { change: { id: P.id, status: 'done', changes: P.changes.map(c => c.label), undo_steps: P.entries.length }, ...(checked ? { checks: checked } : {}), note: 'Applied. The user sees your title and summary, and can undo it in one step.' } };
   }
   if (!P.entries.length) { discard(P); fail('The proposal has no changes: nothing to review. It was closed.'); }
   submit(P);
-  return { deferred: R.decision(P, args.wait ?? DEFAULT_WAIT).then(d => ({ data: { proposal: d, changes: P.changes.map(c => c.label) } })) };
+  return { deferred: R.decision(P, args.wait ?? DEFAULT_WAIT).then(d => ({ data: { proposal: d, changes: P.changes.map(c => c.label), ...(checked ? { checks: checked } : {}) } })) };
 };
 
 T.begin_proposal = T.begin_change; // the names before 0.3
@@ -393,6 +422,14 @@ function inline(s) {
 }
 
 let card = null, changing = false, draft = '', shownFor = null;
+
+/** What the agent's self-check found (js/agent-check.js): shown so the user knows it was checked. */
+function checkLine(c) {
+  const n = c.problems, w = c.warnings;
+  const text = n ? `${n} problem${n > 1 ? 's' : ''} left${c.ignored ? ` — the agent: “${c.ignored}”` : ' — the agent is fixing'}`
+    : `checked: no problems${w ? ` · ${w} note${w > 1 ? 's' : ''}` : ''}`;
+  return el('div', { class: `check ${n ? 'bad' : w ? 'warn' : 'ok'}`, title: 'The agent\'s self-check of the objects it placed: overlaps, water, roads, uneven ground, bridges across the water' }, n ? '⚠ ' : '✓ ', text);
+}
 
 // The card can be dragged by its head to another place over the map; the place is kept in this browser (double-click
 // the head: back to the top right corner). It always stays inside the map.
@@ -477,6 +514,7 @@ function render() {
     P.description ? richText(P.description, 'desc') : null,
     P.changes.length && !(P.single && P.changes.length === 1) ? el('ul', { class: 'changes' }, ...P.changes.slice(0, 12).map(c => el('li', {}, c.label, c.comment ? richText(c.comment, 'comment') : null)),
       P.changes.length > 12 ? el('li', { class: 'muted' }, `and ${P.changes.length - 12} more`) : null) : null,
+    P.check ? checkLine(P.check) : null,
     pending && P.entries.length ? el('div', { class: 'compare' },
       el('span', { class: 'muted small' }, 'Compare'),
       el('div', { class: 'seg' },

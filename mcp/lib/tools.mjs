@@ -19,6 +19,8 @@ export const REGION_DOC = `A region (where) is an object, one of:
 {"all":[...]} (intersection), {"any":[...]} (union), {"not":{...}}.
 Lengths are in the unit of the map (get_map_info).`;
 
+const PLACE_DOC = 'Place an object one of three ways: its center x, z and yaw (degrees counter-clockwise seen from above: its length w points along (cos yaw, −sin yaw) — 0 east, 90 north, −90 south); its two ends "a": [x,z] and "b": [x,z] (center, yaw and, for footprints, the length w follow; d is its width, default 3 m) — use it for bridges, walls, fences, anything from one point to another; or x, z and "towards": [x,z] (its length points there).';
+
 const REGION_SHORT = 'A region object, e.g. {"area":"selection"}, {"zone":"village"}, {"layer":"trees","min":50}, {"near":"roads","distance":5}, {"rect":[x0,z0,x1,z1]}, {"all":[...]}; the full syntax is in describe_region';
 const region = (what = 'Where') => ({ type: 'object', description: `${what}. ${REGION_SHORT}.`, additionalProperties: true });
 const layerArg = desc => ({ type: 'string', description: desc });
@@ -219,7 +221,7 @@ export const TOOLS = [
   {
     name: 'add_items',
     title: 'Add objects, notes, paths',
-    description: 'Adds items to an objects, notes or vector layer. Objects: {kind, x, z, yaw?, w?, d?, props?} (zone is filled from the zones layer). Notes: {x, z, text, color?}. Paths: {kind, points: [[x,z] or [x,z,width]...], closed?, width?, smooth?, props?}. One undo step for the user.',
+    description: `Adds items to an objects, notes or vector layer. Objects: {kind, x, z, yaw?, w?, d?, props?} (zone is filled from the zones layer). ${PLACE_DOC} Notes: {x, z, text, color?}. Paths: {kind, points: [[x,z] or [x,z,width]...], closed?, width?, smooth?, props?}. Match the usual size of the kind (get_map_info → kind_sizes). The result has "checks" when something looks wrong (overlaps, water, a bridge along the river…). One undo step for the user.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -234,7 +236,7 @@ export const TOOLS = [
   {
     name: 'update_items',
     title: 'Change items',
-    description: 'Changes items by id: set fields ({"id":3,"kind":"ruin"}), merge properties ({"id":3,"props":{"level":5}}, null removes one), move by an offset ({"id":3,"move":[dx,dz]}) or turn ({"id":3,"turn":90}, degrees counter-clockwise). One undo step.',
+    description: 'Changes items by id: set fields ({"id":3,"kind":"ruin"}), merge properties ({"id":3,"props":{"level":5}}, null removes one), move by an offset ({"id":3,"move":[dx,dz]}), turn ({"id":3,"turn":90}, degrees counter-clockwise), place anew by its ends ({"id":3,"a":[x,z],"b":[x,z]}) or point it ({"id":3,"towards":[x,z]}). One undo step.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -396,6 +398,42 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'check_change',
+    title: 'See and check your change',
+    description: 'Shows you your open change (between begin_change and end_change, or a proposal waiting for review) before the user judges it: two images of the place — BEFORE and AFTER, with your objects outlined and labeled (#id kind; bridges with a line from end a to b; problems in red) — what changed per layer, and checks of every object placed or moved: overlaps with other objects, standing in water or on a road, uneven ground (with the flatten call), bridges (both ends on dry land, crossing the water, the angle to the flow: 90° is straight across). end_change runs the same checks and does not finish while problems are left. With "items" it checks objects already on the map. Look at the images: do they match what the user asked?',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: 'The change (default: the open one)' },
+        items: { type: 'object', description: 'Instead: check objects on the map, {"layer":"buildings","ids":[3,4]} (no ids: all of the layer)', additionalProperties: true },
+        images: { type: 'boolean', description: 'Default true' },
+        size: { type: 'integer', minimum: 256, maximum: 1200, description: 'Image size in pixels (default 640)' },
+        layers: { type: 'array', items: { type: 'string' }, description: 'Layers to draw (default: the visible ones)' },
+      },
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
+    name: 'find_crossing',
+    title: 'Where to cross water',
+    description: 'Finds the narrowest places to cross a river or other water in a region (default: the user\'s selected area, else the view): for each, the two points on the banks — a and b, on dry land — for a bridge straight across the flow, its length, the width of the water, the yaw, the angle to the flow, the heights and slopes at both ends, and objects in the way. Then add_items {"kind": "<bridge>", "a": a, "b": b, "d": <width>}. Also lists the crossings already on the map (kinds and sizes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        region: region('Where to cross (the middle of the crossing is in it)'),
+        water: { type: 'array', items: { type: 'string' }, description: 'The water layers (default: masks and classes named water, river, lake…, vector rivers)' },
+        bank: { type: 'number', description: 'How far each end reaches onto dry land (default 1.5 m)' },
+        width: { type: 'number', description: 'The width of the bridge, to find objects in the way (default 3 m)' },
+        max_length: { type: 'number', description: 'The widest water to cross (default 40 m)' },
+        near: { ...point, description: 'Prefer crossings near this point [x, z] (e.g. where a road meets the river)' },
+        limit: { type: 'integer', minimum: 1, maximum: 10, description: 'Default 3' },
+      },
+      additionalProperties: false,
+    },
+    annotations: ro,
+  },
+  {
     name: 'begin_change',
     title: 'Start a change of several steps',
     description: 'Groups the next changing calls into one change the user sees on a card over the map with your title and description, until end_change. In review mode (get_map_info → review_mode on, the default) it is one proposal: the steps apply at once but are held until the user accepts, asks for changes or rejects it all. Without review mode it becomes one undo step. Use it whenever one idea takes more than one call (e.g. ruins + rubble + overgrowth). Without it each changing call is its own change (in review mode: its own proposal, which waits for the decision).',
@@ -405,8 +443,8 @@ export const TOOLS = [
   {
     name: 'end_change',
     title: 'Finish the change (review mode: submit it)',
-    description: 'Ends the change opened with begin_change. In review mode it shows the proposal to the user and waits for the decision (up to "wait" seconds): accepted (kept and saved), changes_requested (undone; "feedback" says what the user wants instead: make a new change), rejected (undone), or pending (call wait_for_review). Without review mode the change is applied as one undo step (status done).',
-    inputSchema: { type: 'object', properties: { summary: { type: 'string', description: 'For the user: what you did and why (replaces the description). Lines, "- " lists, **bold** and `code` show as such' }, title: { type: 'string', description: 'A better title, if the change turned out different' }, wait: { type: 'integer', minimum: 0, maximum: 110, description: 'Review mode: seconds to wait for the decision (default 45)' } }, additionalProperties: false },
+    description: 'Ends the change opened with begin_change. First it checks the objects of the change (as check_change): while problems are left (overlaps, objects in the water, a bridge along the river or with an end in the water…) the change stays open and you get the problems — fix them and call end_change again, or give "ignore_problems" with the reason. In review mode it then shows the proposal to the user and waits for the decision (up to "wait" seconds): accepted (kept and saved), changes_requested (undone; "feedback" says what the user wants instead: make a new change), rejected (undone), or pending (call wait_for_review). Without review mode the change is applied as one undo step (status done).',
+    inputSchema: { type: 'object', properties: { summary: { type: 'string', description: 'For the user: what you did and why (replaces the description). Lines, "- " lists, **bold** and `code` show as such' }, title: { type: 'string', description: 'A better title, if the change turned out different' }, ignore_problems: { type: 'string', description: 'Finish although the checks found problems: why they are fine (the user sees it)' }, wait: { type: 'integer', minimum: 0, maximum: 110, description: 'Review mode: seconds to wait for the decision (default 45)' } }, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
@@ -438,7 +476,7 @@ export const SERVER_TOOLS = new Set(['get_project_path', 'open_map', 'create_map
 export const WRITE_TOOLS = new Set(['add_items', 'update_items', 'delete_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'undo']);
 
 /** Tool calls that may wait for the user (a confirmation, a proposal under review): a longer timeout. */
-export const SLOW_TOOLS = new Set(['open_map', 'create_map', 'delete_items', 'end_change', 'wait_for_review', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
+export const SLOW_TOOLS = new Set(['open_map', 'create_map', 'delete_items', 'end_change', 'wait_for_review', 'check_change', 'find_crossing', 'add_items', 'update_items', 'scatter_items', 'paint_layer', 'edit_terrain', 'create_layer', 'update_layer', 'find_route', 'undo']);
 
 export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world seen from above, open in the user's browser. You read it and change it through these tools; every change appears at once in the app, and the user can undo it (Ctrl+Z).
 
@@ -447,7 +485,8 @@ export const INSTRUCTIONS = `GameWorld Painter: a layered map of a game world se
 - open_map opens a map by its folder path, create_map makes a new one; when the app is not open, the server opens it in the browser.
 - Look with render_map; measure with describe_region, find_items, find_spots, analyze_items, analyze_walkability, find_route.
 - Change with scatter_items (many objects), add_items / update_items / delete_items, paint_layer (masks, categories), edit_terrain (heights), create_layer / update_layer. Prefer one call for a whole batch. Give each change a "comment" for the user (what and why); the app shows it with the change.
-- Several calls for one idea: begin_change (title, description) → the calls → end_change (summary). The user sees it as one change (one undo step, or one proposal in review mode).
+- Place objects by their center (x, z, yaw), by their two ends "a" and "b" (bridges, walls: from one point to another), or "towards" a point; match the usual size of the kind (get_map_info → kind_sizes). For a bridge use find_crossing: it gives the bank points a and b straight across the flow.
+- Several calls for one idea: begin_change (title, description) → the calls → check_change (look at the BEFORE / AFTER images and the checks; fix what is wrong) → end_change (summary). The user sees it as one change (one undo step, or one proposal in review mode). end_change does not finish while the checks find problems (overlaps, objects in water, a bridge along the river…) unless you give "ignore_problems" with the reason.
 - ${REGION_DOC.replace(/\n/g, '\n  ')}
 - x grows east, z grows south (north is up); lengths are in the unit of the map. Keep what the user made unless asked; respect locked layers.
 - Review mode (get_map_info → review_mode, on by default): your changes are proposals. A changing call (or end_change) waits for the user's decision (up to 45 s; then wait_for_review): accepted — keep going; changes_requested — it was undone, redo it following "feedback"; rejected — it was undone, do not repeat it.

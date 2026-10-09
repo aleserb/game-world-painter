@@ -57,7 +57,9 @@ Later the server will be on npm: `npx -y game-world-painter-mcp` instead of `nod
 | `analyze_walkability` | Walkable ground, isolated pockets, narrow passages, unreachable items |
 | `find_route` | A walking route around obstacles, preferring roads, away from danger; can add it as a path |
 | `scatter_items` | Many objects placed naturally: spacing, count, density from a mask, distances to keep, groups, random props |
-| `add_items`, `update_items`, `delete_items` | Exact edits of objects, notes and paths (deletion can ask the user) |
+| `add_items`, `update_items`, `delete_items` | Exact edits of objects, notes and paths (deletion can ask the user); objects by their center and yaw, by their two ends `a`, `b`, or `towards` a point |
+| `find_crossing` | Where to cross water: the narrowest places, with the bank points `a`, `b` for a bridge straight across the flow |
+| `check_change` | The agent sees its change before the user does: BEFORE / AFTER images, what changed, checks of every placed object |
 | `paint_layer` | Masks (percent) and categories (classes) over a region, with a soft edge and noise |
 | `edit_terrain` | Raise, lower, flatten, smooth, slope (from a place to another), noise |
 | `create_layer`, `update_layer` | New layers; names, groups, colors, visibility, classes |
@@ -93,6 +95,12 @@ The server also offers the skill and the [project format](../docs/project-format
   folder (no `..`, no links out). When no app is connected it opens the default browser at
   `https://aleserb.github.io/game-world-painter/?mcp=<port>&map=<path>` (the app on that link turns AI Agent on with
   this local server and waits for the map). After a reload the app opens the map again once the server is connected.
+- **Self-check**: the changing calls return `checks` for the objects they placed — overlaps, objects in water or on
+  roads, uneven ground, bridges (both ends on dry land, over the water, about 90° to the flow) — and `check_change`
+  adds two images of the place (BEFORE and AFTER, the agent's objects outlined and labeled, problems in red).
+  `end_change` runs the checks and keeps the change open while problems are left (unless the agent gives
+  `ignore_problems` with a reason); in review mode a single call with problems is not shown for review. The card shows
+  the result of the self-check. Bridges and other crossings are walkable for `find_route` and `analyze_walkability`.
 - **Changes on a card**: `begin_change` … `end_change` groups calls; a call alone is a change too. The card at the top
   right of the map (the user can drag it elsewhere) shows the agent's title, description or summary, and each step with its `comment` (lines,
   `- ` lists, `**bold**`, `` `code` ``).

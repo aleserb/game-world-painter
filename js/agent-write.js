@@ -15,6 +15,31 @@ function writable(ctx) { if (!ctx.canWrite) fail('The user lets the agent only r
 
 // ------------------------------------------------------------------------------------------------ items
 
+/** The yaw that turns an object's length (w, its local x axis) along the direction (dx, dz): the length then
+ *  points along (cos yaw, −sin yaw) — yaw 0: east, 90: north, −90: south (x east, z south, seen from above). */
+const yawAlong = (dx, dz) => r2(Math.atan2(-dz, dx) * 180 / Math.PI);
+
+/** Where and how an object stands, given one of: x, z (+ yaw) — the center; a, b — the two ends of its length
+ *  (a bridge from bank to bank: the center between, the yaw along a→b, w the distance unless given); towards — the
+ *  yaw that points its length to a point. Returns {x, z, yaw, w?} or null (nothing about the place). */
+function placement(it, n, length = false) {
+  const has = k => it[k] != null;
+  if (has('a') || has('b')) {
+    if (!has('a') || !has('b')) fail(`items[${n}]: give both ends "a" and "b"`);
+    const a = pt(it.a, `items[${n}].a`), b = pt(it.b, `items[${n}].b`), dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
+    if (!(len > 0)) fail(`items[${n}]: "a" and "b" are the same point`);
+    const o = { x: r2(has('x') ? it.x : (a[0] + b[0]) / 2), z: r2(has('z') ? it.z : (a[1] + b[1]) / 2), yaw: has('yaw') ? r2(it.yaw) : yawAlong(dx, dz) };
+    if (length) o.w = r2(has('w') ? num(it.w, 'w') : len); // footprints: the length is the distance
+    return o;
+  }
+  if (has('towards')) {
+    const x = num(it.x, `items[${n}].x`), z = num(it.z, `items[${n}].z`), [tx, tz] = pt(it.towards, `items[${n}].towards`);
+    if (tx === x && tz === z) fail(`items[${n}]: "towards" is the center itself`);
+    return { x: r2(x), z: r2(z), yaw: yawAlong(tx - x, tz - z) };
+  }
+  return null;
+}
+
 /** Checks and completes new items for a layer; returns clean copies. */
 function cleanItems(g, L, list) {
   const k = g.k, zones = L.type === 'objects' ? zonesLayer() : null;
@@ -34,9 +59,11 @@ function cleanItems(g, L, list) {
       if (it.color) o.color = String(it.color);
     } else {
       if (!it.kind) fail(`items[${n}]: an object needs "kind"`);
-      Object.assign(o, { kind: String(it.kind), x: r2(num(it.x, `items[${n}].x`)), z: r2(num(it.z, `items[${n}].z`)), yaw: r2(it.yaw ?? 0) });
-      if (L.meta.style === 'footprint' || it.w != null) Object.assign(o, { w: r2(it.w ?? 2 * k), d: r2(it.d ?? it.w ?? 2 * k), ox: r2(it.ox ?? 0), oz: r2(it.oz ?? 0) });
-      if (L.meta.style === 'link') {
+      const link = L.meta.style === 'link', p = placement(it, n, L.meta.style === 'footprint');
+      Object.assign(o, { kind: String(it.kind), x: p ? p.x : r2(num(it.x, `items[${n}].x`)), z: p ? p.z : r2(num(it.z, `items[${n}].z`)), yaw: p ? p.yaw : r2(it.yaw ?? 0) });
+      const w = p?.w ?? it.w;
+      if (L.meta.style === 'footprint' || w != null) Object.assign(o, { w: r2(w ?? 2 * k), d: r2(it.d ?? (p?.w != null ? Math.min(p.w, 3 * k) : null) ?? it.w ?? 2 * k), ox: r2(it.ox ?? 0), oz: r2(it.oz ?? 0) });
+      if (link) {
         const r = 3 * k;
         o.a = it.a ? pt(it.a, 'a').map(r2) : [r2(o.x - r), o.z];
         o.b = it.b ? pt(it.b, 'b').map(r2) : [r2(o.x + r), o.z];
@@ -77,6 +104,8 @@ T.add_items = (args, ctx) => {
   return { data: { layer: L.id, added: added.length, ids: added.map(i => i.id) } };
 };
 
+const it_isPath = it => !!it?.points;
+
 function turnItem(it, deg) {
   if (!it.points) { it.yaw = r2(((((it.yaw || 0) + deg) % 360) + 540) % 360 - 180); return; }
   const [cx, cz] = center(it), a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -95,11 +124,19 @@ T.update_items = (args, ctx) => {
   writable(ctx); editable(L);
   const byId = new Map(L.items.map(i => [i.id, i])), missing = args.items.filter(p => !byId.has(p.id)).map(p => p.id);
   if (missing.length) fail(`No items with ids ${missing.join(', ')} in "${L.id}"`);
+  const link = L.meta.style === 'link';
+  const places = args.items.map((p, n) => (!it_isPath(byId.get(p.id)) && (p.a != null || p.b != null || p.towards != null)
+    ? placement({ x: byId.get(p.id).x, z: byId.get(p.id).z, ...p }, n, L.meta.style === 'footprint') : null));
   A().editObjects(L, `AI: change ${args.items.length} item${args.items.length > 1 ? 's' : ''} of ${L.meta.name}`, () => {
-    for (const p of args.items) {
-      const it = byId.get(p.id);
+    args.items.forEach((p, n) => {
+      const it = byId.get(p.id), place = places[n];
+      if (place) {
+        Object.assign(it, place);
+        if (place.w != null && it.d == null) it.d = Math.min(place.w, 3 * g.k);
+        if (link && p.a && p.b) { it.a = pt(p.a, 'a').map(r2); it.b = pt(p.b, 'b').map(r2); }
+      }
       for (const [key, v] of Object.entries(p)) {
-        if (key === 'id') continue;
+        if (key === 'id' || (place && ['a', 'b', 'towards', 'x', 'z', 'yaw', ...(place.w != null ? ['w'] : [])].includes(key))) continue;
         if (key === 'move') { const [dx, dz] = pt(v, 'move'); moveItem(it, dx, dz); } else if (key === 'turn') turnItem(it, num(v, 'turn'));
         else if (key === 'props') {
           const next = { ...(it.props || {}) };
@@ -109,7 +146,7 @@ T.update_items = (args, ctx) => {
         else if (v === null) delete it[key];
         else it[key] = typeof v === 'number' ? r2(v) : v;
       }
-    }
+    });
   });
   flash({ box: boxOf(args.items.map(p => byId.get(p.id))) }, `changed ${args.items.length} item(s)`);
   return { data: { layer: L.id, changed: args.items.length, items: args.items.slice(0, 50).map(p => brief(L, byId.get(p.id), g)) } };

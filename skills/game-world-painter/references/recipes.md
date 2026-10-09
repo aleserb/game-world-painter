@@ -77,6 +77,29 @@ Fix them by connecting pockets (`edit_terrain` to lower or smooth a slope, `pain
 1. Run `analyze_items` with `cluster_distance` = the pack radius. It gives the groups and the largest gaps.
 2. Move whole groups (every id of the group, the same `move`) from crowded places towards the gaps with `update_items`.
 
+## Bridges, buildings and other placed things
+
+**A bridge across a river** (in the selected area or near a road):
+1. `find_crossing` (region: the selection; `near` the road's end if the bridge should continue a road). Each result
+   has the bank points `a` and `b` on dry land, straight across the flow, the length, the water width and the heights.
+2. Look at `existing_crossings` (and `get_map_info` → `kind_sizes`) for the kind, layer and width bridges have here.
+3. `add_items` {"kind": "stone_bridge", "a": a, "b": b, "d": 3} — no yaw to compute.
+4. `check_change`: in AFTER the line a→b crosses the river, both ends on land, nothing overlaps it. A path to it:
+   `find_route` from a to the road (or `add_items` on the roads layer).
+5. "A crossing on foot" without a bridge (a ford): `edit_terrain` flatten just above the water along the same a→b strip,
+   then `paint_layer` erase on the water there; check with `find_route` from a to b.
+
+**A house with a yard** ("one house in the north part with props"):
+1. Where: `describe_region` of the part asked for; a flat, dry, open place away from roads, water and other objects
+   (`find_spots` "flat" or "empty" with the water, trees and buildings layers, in that part only). Keep 5 m or more
+   from a bridge or a road end so paths stay free.
+2. `add_items` with the usual size of the kind (`kind_sizes`), `towards` the road or the bridge (its long side faces
+   the way people come).
+3. `check_change` → uneven ground: `edit_terrain` flatten over `{"items": {"layer": …, "ids": [id]}}`.
+4. Props around it: `scatter_items` in a ring around the house (`{"all": [{"near": [x, z], "distance": 8}, {"not":
+   {"items": {"layer": "buildings", "ids": [id]}}}]}`), `keep_away` from the buildings 1 m and the water 2 m, a few kinds.
+5. `check_change` again: nothing inside the house, nothing in the water, the bridge free.
+
 ## World building
 
 **Check a zone and add what is missing (buildings, roads, lamps)**:

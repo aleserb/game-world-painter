@@ -99,7 +99,9 @@ no dependencies). The agent then gets tools to understand the map (an overview, 
 region, items with distances, open or hidden spots, walkability, routes, spacing and groups) and to change it
 (scatter objects naturally, paint masks and categories with soft edges and noise, raise, flatten, smooth and slope
 the terrain, add, change and delete items, create layers), with regions such as *the selected area*, *the village
-zone*, *8 m around the roads*, and their intersections. `get_project_path` tells it where the map's files are on
+zone*, *8 m around the roads*, and their intersections. Before showing a change, the agent sees it — before and after
+images with its objects outlined — and checks it: overlaps, objects in water or on roads, uneven ground, bridges
+straight across the river with both ends on land (`find_crossing` finds where). `get_project_path` tells it where the map's files are on
 disk, for work with scripts and other tools; `open_map` and `create_map` open a map by its path or make a new one —
 the server opens the app in the browser if needed, and the app reads and writes that folder through the server.
 
