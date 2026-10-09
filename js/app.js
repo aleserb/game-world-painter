@@ -251,7 +251,7 @@ function setMeta(layer, key, value, label) {
 function setLayers(newList, newActive, label) {
   const before = { list: [...S.layers], active: S.active };
   const after = { list: newList, active: newActive };
-  const apply = st => { S.layers = [...st.list]; setActive(st.active, false); markMeta(); saveLayerView(); };
+  const apply = st => { S.layers = groupTogether(st.list); setActive(st.active, false); markMeta(); saveLayerView(); };
   apply(after);
   pushUndo({ label, undo: () => apply(before), redo: () => apply(after) });
 }
@@ -343,7 +343,8 @@ async function openProject(project) {
   toast('Loading layers…', 60000);
   const layers = (project.layers || []).map(m => makeLayer(structuredClone(m), S.proj));
   await Promise.all(layers.map(readLayer));
-  S.layers = layers;
+  S.layers = groupTogether(layers);
+  const joined = !sameOrder(S.layers, layers); // a group was split in metadata.json: saved joined
   view.world = S.project.world;
   view.resize();
   restoreLayerView();
@@ -352,6 +353,7 @@ async function openProject(project) {
   toast(`${S.layers.length} layers loaded from ${folder.name}/`, 2000);
   if (!S.active) setActive([...S.layers].reverse().find(l => l.raster) || S.layers[S.layers.length - 1], false);
   renderAll();
+  if (joined) markMeta();
   ME.onProjectOpen?.();
 }
 
@@ -578,9 +580,10 @@ async function takeDiskMetadata(disk) {
     const prev = secondary.slice(0, k).reverse().find(p => order.includes(p));
     order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, id);
   });
-  const list = order.map(keep).filter(Boolean);
+  const merged = order.map(keep).filter(Boolean), list = groupTogether(merged);
   await Promise.all(added.map(readLayer));
-  if (structure || list.length !== S.layers.length || list.some((l, k) => l !== S.layers[k])) {
+  if (!sameOrder(list, merged)) markMeta(); // the disk split a group: saved joined
+  if (structure || !sameOrder(list, S.layers)) {
     history.undo = [];
     history.redo = [];
     S.layers = list;
@@ -2685,6 +2688,19 @@ function renameLayer(L, nameEl) {
 }
 
 const groupOf = l => l.meta.group || 'Other';
+const sameOrder = (a, b) => a.length === b.length && a.every((l, k) => l === b[k]);
+
+/** The layers (bottom to top) with the layers of every group together, as the panel shows them: a group stays where
+ *  its topmost layer is; the order inside each group and among the groups is kept. */
+function groupTogether(list) {
+  const groups = new Map();
+  for (const l of [...list].reverse()) { // top to bottom
+    const g = groupOf(l);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(l);
+  }
+  return [...groups.values()].flat().reverse();
+}
 
 /** Drag and drop in the Layers panel: next to a layer of the same group. */
 function moveLayerTo(L, target, above) {
@@ -2694,10 +2710,6 @@ function moveLayerTo(L, target, above) {
   list.splice(k, 0, L);
   setLayers(list, L, 'move layer');
   renderAll();
-}
-
-function combine(entry, undoExtra, redoExtra) {
-  return { label: entry.label, undo: () => { undoExtra(); entry.undo(); }, redo: () => { entry.redo(); redoExtra(); } };
 }
 
 /** ▲▼: the selected layers move one step inside their group (another group: change Group in the properties); a
@@ -2765,10 +2777,16 @@ function setLayerGroup(L, g) {
   const list = S.layers.filter(l => l !== L);
   const anchor = list.filter(l => groupOf(l) === g).at(-1) || list.filter(l => groupOf(l) === old).at(-1);
   list.splice(anchor ? list.indexOf(anchor) + 1 : list.length, 0, L);
-  const set = v => { if (v === undefined) delete L.meta.group; else L.meta.group = v; };
-  set(g);
-  setLayers(list, L, 'layer group');
-  history.undo[history.undo.length - 1] = combine(history.undo.at(-1), () => set(before), () => set(g));
+  const beforeList = [...S.layers], beforeActive = S.active;
+  const apply = (grp, lst, act) => { // the group first: the list keeps groups together by it
+    if (grp === undefined) delete L.meta.group; else L.meta.group = grp;
+    S.layers = groupTogether(lst);
+    setActive(act, false);
+    markMeta();
+    saveLayerView();
+  };
+  apply(g, list, L);
+  pushUndo({ label: 'layer group', undo: () => apply(before, beforeList, beforeActive), redo: () => apply(g, list, L) });
   renderAll();
 }
 
@@ -3944,7 +3962,7 @@ ME.app = {
 };
 
 window.gwp = { // for the console and tests
-  S, save, undo, redo, setTool, setActive, layerById, poll, store, history, commitFloat, setArea, view3d, resizeMap, createMap, changeUnit, openMapDialog, dock,
+  S, save, undo, redo, setTool, setActive, layerById, setLayerGroup, poll, store, history, commitFloat, setArea, view3d, resizeMap, createMap, changeUnit, openMapDialog, dock,
   connect: handle => connectFolder(new ME.Folder(handle)),
   get view() { return view; }, get folder() { return folder; }, get busy() { return busy; },
 };

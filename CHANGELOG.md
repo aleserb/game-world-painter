@@ -21,6 +21,8 @@
 - Select tool first in the tool bar, on every layer; in-app confirmation dialogs; a two-column Help.
 - Layers: the eye and the lock appear on hover; select several layers (Shift+click: the rows between, Ctrl/Cmd+click:
   one more), Space shows / hides them, Delete layer deletes them.
+- The layers of a group are always together: a map whose metadata.json splits a group (or a change on the disk that
+  does) opens with the group joined where its topmost layer is, and is saved so.
 - Layers move up and down inside their group only (another group: change Group; the layer goes to the top of it);
   a click on a group header selects the group and ▲▼ move it; ↑↓ select the layer above / below.
 - The published site loads the scripts of its own commit (no mix of old and new files from the browser cache).

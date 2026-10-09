@@ -367,8 +367,8 @@ table.keys td { padding: 2.25px 0; }
 .agent-head { display: flex; gap: 10.5px; align-items: flex-start; }
 .agent-head h3 { margin: 0 0 3px; }
 .agent-head p { margin: 0; }
-.agent-head .bot { display: inline-flex; padding: 7.5px; border-radius: 9px; background: var(--panel-2); color: #c8b0ff; }
-.agent-head .bot svg { width: 24px; height: 24px; }
+.agent-head .bot { display: flex; align-items: center; justify-content: center; flex: none; width: 39px; height: 39px; border-radius: 9px; background: var(--panel-2); color: #c8b0ff; }
+.agent-head .bot .icon { width: 22px; height: 22px; }
 .agent-head .close { margin-left: auto; }
 .agent-status { display: flex; align-items: center; gap: 9px; margin: 12px 0 9px; padding: 9px 10.5px; border: 1px solid var(--line); border-radius: 7.5px; background: rgba(255, 255, 255, 0.02); }
 .agent-status.on { border-color: rgba(76, 195, 138, 0.5); background: rgba(76, 195, 138, 0.07); }

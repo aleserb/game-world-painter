@@ -284,6 +284,34 @@ try {
   const u = await ev(`({ unit: gwp.S.project.unit, w: gwp.S.project.world.width, x: gwp.layerById('enemies').items[0].x, label: document.getElementById('size-label').textContent })`);
   check(u.unit === 'u' && u.w === 32000 && near(u.x, cm.x) && u.label.endsWith(' u'), 'rename the unit: the numbers stay', u.label);
 
+  // the layers of a group stay together: another program writes a metadata.json that splits Terrain
+  const runs = `(() => { const r = []; for (const l of [...gwp.S.layers].reverse()) { const g = l.meta.group; if (r.at(-1) !== g) r.push(g); } return r; })()`;
+  const contiguous = list => new Set(list).size === list.length;
+  await until(`!gwp.busy && !gwp.S.layers.some(l => l.dirty)`, 8000);
+  await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo');
+    const h = await d.getFileHandle('metadata.json'), j = JSON.parse(await (await h.getFile()).text());
+    const k = j.layers.findIndex(l => l.id === 'water'); j.layers.push(...j.layers.splice(k, 1)); // Terrain's water on top of everything
+    const w = await h.createWritable(); await w.write(JSON.stringify(j)); await w.close(); })()`);
+  await until(`gwp.S.layers.at(-1)?.id === 'water' || ${runs}[0] === 'Terrain'`, 8000);
+  const joinedRuns = await ev(runs);
+  const savedRuns = await until(async () => {
+    const r = await ev(`(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('demo');
+      const j = JSON.parse(await (await (await d.getFileHandle('metadata.json')).getFile()).text()); const r = [];
+      for (const l of [...j.layers].reverse()) if (r.at(-1) !== l.group) r.push(l.group); return r; })()`);
+    return contiguous(r) && r;
+  }, 8000);
+  check(contiguous(joinedRuns) && joinedRuns[0] === 'Terrain' && savedRuns, 'a group split on the disk is joined (and saved joined)', `${joinedRuns.join(', ')} | saved ${savedRuns}`);
+  // moving a layer to another group keeps the groups together, and undo too
+  await ev(`gwp.setActive(gwp.layerById('trees')); true`);
+  await ev(`gwp.setLayerGroup(gwp.layerById('roads'), 'Greenery'); true`);
+  const afterMove = await ev(runs), roadsIn = await ev(`gwp.layerById('roads').meta.group`);
+  await ev(`gwp.undo(); true`);
+  const afterUndo = await ev(runs);
+  await ev(`gwp.redo(); true`);
+  const afterRedo = await ev(runs);
+  check(roadsIn === 'Greenery' && [afterMove, afterUndo, afterRedo].every(contiguous) && (await ev(`gwp.layerById('roads').meta.group`)) === 'Greenery',
+    'changing a layer\'s group (with undo, redo) keeps groups together', `${afterMove.join(', ')} | ${afterUndo.join(', ')}`);
+
   check(errors.length === 0, 'no errors in the page', errors.slice(0, 3).join(' | '));
 } catch (err) {
   check(false, 'the test ran', err.message);
