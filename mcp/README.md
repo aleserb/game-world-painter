@@ -6,12 +6,11 @@ Lets AI agents — Claude Code, Codex, GitHub Copilot (CLI and VS Code), Cursor,
 [Model Context Protocol](https://modelcontextprotocol.io) client — read and edit the map open in
 [GameWorld Painter](https://aleserb.github.io/game-world-painter/). Node.js 18 or newer, no dependencies.
 
-```mermaid
-flowchart LR
-  A[Agent: Claude Code, Codex, Copilot…] -- MCP over stdio or HTTP --> S[MCP server<br/>127.0.0.1:38765]
-  S -- tool calls: Server-Sent Events --> P[GameWorld Painter<br/>in the browser]
-  P -- results: HTTP POST --> S
-  P -- autosave --> F[(The project folder:<br/>PNG and JSON)]
+```text
+Agent (Claude Code, Codex, Copilot…) ── MCP over stdio or HTTP ──▶ MCP server, 127.0.0.1:38765
+MCP server ── tool calls: Server-Sent Events ──▶ GameWorld Painter in the browser
+GameWorld Painter ── results: HTTP POST ──▶ MCP server
+GameWorld Painter ── autosave ──▶ the project folder (PNG and JSON)
 ```
 
 The agent starts the server; the app (with **AI Agent** turned on in its header) connects to it. The tools run in the

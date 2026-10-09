@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-10-09
+
+- The MCP server package is published from GitHub Actions with npm trusted publishing and provenance (the first
+  release made this way): npmjs.com shows where and how it was built.
+- The package page on npmjs.com shows the diagram of how the agent, the server and the app talk as text (npm does
+  not draw Mermaid).
+
 ## 0.2.0 — 2026-10-09
 
 - The MCP server is on npm: [`game-world-painter-mcp`](https://www.npmjs.com/package/game-world-painter-mcp) —
